@@ -27,8 +27,8 @@ export const getOrganizations = async (req: Request, res: Response) => {
 export const getOrganizationById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const org = await prisma.organization.findUnique({
-      where: { id },
+    const org = await prisma.organization.findFirst({
+      where: { id, ...(req.user?.role === 'SUPER_ADMIN' ? {} : { members: { some: { userId: req.user?.id, organizationId: id } } }) },
       include: {
         buildings: {
           include: {
@@ -60,11 +60,15 @@ export const updateOrganization = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { name, industryType, address, timezone, currency } = req.body;
-    const updated = await prisma.organization.update({
-      where: { id },
+    if (req.user?.role !== 'SUPER_ADMIN' && req.user?.organizationId !== id) return res.status(403).json({ error: 'Organization scope mismatch.' });
+    if (req.user?.role !== 'SUPER_ADMIN' && !['ORG_ADMIN'].includes(req.user?.role || '')) return res.status(403).json({ error: 'Organization administrator role is required.' });
+    const updated = await prisma.organization.updateMany({
+      where: { id, ...(req.user?.role === 'SUPER_ADMIN' ? {} : { members: { some: { userId: req.user?.id, organizationId: id } } }) },
       data: { name, industryType, address, timezone, currency }
     });
-    return res.json({ organization: updated });
+    if (!updated.count) return res.status(404).json({ error: 'Organization not found.' });
+    const org = await prisma.organization.findUnique({ where: { id } });
+    return res.json({ organization: org });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }

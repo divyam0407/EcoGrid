@@ -26,15 +26,52 @@ export const Settings: React.FC = () => {
 
   // Buildings list
   const [buildings, setBuildings] = useState<any[]>([]);
+  const [tariffs, setTariffs] = useState<any[]>([]);
   const [newBldgName, setNewBldgName] = useState('');
   const [newBldgType, setNewBldgType] = useState('ACADEMIC');
   const [newBldgArea, setNewBldgArea] = useState('');
 
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [tariffEditor, setTariffEditor] = useState<any>({ tariffName: '', tariffType: 'FLAT', pricePerKwh: '', demandChargePerKw: '', demandWindowMinutes: 60, allowGridExport: false, exportPricePerKwh: '', fixedCharge: '', carbonEmissionKgPerKwh: '', periods: [] as any[] });
+  const [editingTariffId, setEditingTariffId] = useState('');
+  const [tariffMessage, setTariffMessage] = useState('');
 
   useEffect(() => {
     fetchBuildings();
+    fetchTariffs();
   }, []);
+
+  const fetchTariffs = async () => {
+    if (!user?.organization?.id) return;
+    try { const res = await api.get(`/organizations/${user.organization.id}`); setTariffs(res.data.organization?.tariffs || []); }
+    catch (err) { console.error('Failed to load tariffs:', err); }
+  };
+
+  const selectTariffForEdit = (tariff: any) => {
+    setEditingTariffId(tariff.id);
+    setTariffEditor({ tariffName: tariff.tariffName, tariffType: tariff.tariffType, pricePerKwh: String(tariff.pricePerKwh),
+      demandChargePerKw: tariff.demandChargePerKw == null ? '' : String(tariff.demandChargePerKw), demandWindowMinutes: tariff.demandWindowMinutes,
+      allowGridExport: tariff.allowGridExport, exportPricePerKwh: tariff.exportPricePerKwh == null ? '' : String(tariff.exportPricePerKwh),
+      fixedCharge: String(tariff.fixedCharge ?? 0), carbonEmissionKgPerKwh: tariff.carbonEmissionKgPerKwh == null ? '' : String(tariff.carbonEmissionKgPerKwh),
+      periods: tariff.periods || [] });
+  };
+
+  const saveTariff = async (event: React.FormEvent) => {
+    event.preventDefault(); setTariffMessage('');
+    try {
+      const payload = { ...tariffEditor, pricePerKwh: Number(tariffEditor.pricePerKwh),
+        demandChargePerKw: tariffEditor.demandChargePerKw === '' ? null : Number(tariffEditor.demandChargePerKw),
+        exportPricePerKwh: tariffEditor.allowGridExport ? Number(tariffEditor.exportPricePerKwh) : null,
+        fixedCharge: Number(tariffEditor.fixedCharge || 0),
+        carbonEmissionKgPerKwh: tariffEditor.carbonEmissionKgPerKwh === '' ? null : Number(tariffEditor.carbonEmissionKgPerKwh),
+        periods: tariffEditor.tariffType === 'FLAT' ? [] : tariffEditor.periods.map((p: any) => ({ periodName: p.periodName, startTime: p.startTime, endTime: p.endTime, dayType: p.dayType, pricePerKwh: Number(p.pricePerKwh) })) };
+      if (!user?.organization?.id) throw new Error('Organization context is unavailable.');
+      if (editingTariffId) await api.put(`/organizations/${user.organization.id}/tariffs/${editingTariffId}`, payload);
+      else await api.post(`/organizations/${user.organization.id}/tariffs`, payload);
+      setTariffMessage('Tariff saved.'); setEditingTariffId(''); await fetchTariffs();
+      setTariffEditor({ tariffName: '', tariffType: 'FLAT', pricePerKwh: '', demandChargePerKw: '', demandWindowMinutes: 60, allowGridExport: false, exportPricePerKwh: '', fixedCharge: '', carbonEmissionKgPerKwh: '', periods: [] });
+    } catch (err: any) { setTariffMessage(err.response?.data?.error || err.message || 'Tariff could not be saved.'); }
+  };
 
   const fetchBuildings = async () => {
     try {
@@ -280,45 +317,32 @@ export const Settings: React.FC = () => {
 
       {/* Tab 3: Tariffs */}
       {activeTab === 'tariffs' && (
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4 max-w-2xl">
-          <h3 className="text-sm font-bold text-white">Configured Electricity Tariff Structure</h3>
-          <p className="text-xs text-slate-400">
-            Time-of-Use (TOU) billing periods driving the mathematical cost optimization solver
-          </p>
-
-          <div className="space-y-2 text-xs font-mono">
-            <div className="bg-slate-850 p-3 rounded-lg border border-slate-800 flex items-center justify-between">
-              <div>
-                <span className="text-blue-400 font-bold block">OFF_PEAK NIGHT</span>
-                <span className="text-slate-400 text-[11px]">00:00 - 06:00 (All Days)</span>
-              </div>
-              <span className="text-emerald-400 font-bold text-sm">$0.08 / kWh</span>
+        <div className="space-y-4">
+          <p className="text-xs text-slate-400">Organization-configured import, export, demand and emissions terms. Optimization only uses rates effective across the selected forecast.</p>
+          <form onSubmit={saveTariff} className="bg-slate-900 border border-slate-800 p-5 rounded-xl space-y-3">
+            <div className="flex items-center justify-between"><h3 className="text-sm font-semibold text-white">{editingTariffId ? 'Edit tariff' : 'Add configured tariff'}</h3>{editingTariffId && <button type="button" onClick={() => { setEditingTariffId(''); setTariffEditor({ tariffName: '', tariffType: 'FLAT', pricePerKwh: '', demandChargePerKw: '', demandWindowMinutes: 60, allowGridExport: false, exportPricePerKwh: '', fixedCharge: '', carbonEmissionKgPerKwh: '', periods: [] }); }} className="text-xs text-slate-400">Cancel edit</button>}</div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <input required value={tariffEditor.tariffName} onChange={e => setTariffEditor({ ...tariffEditor, tariffName: e.target.value })} placeholder="Tariff name" className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" />
+              <select value={tariffEditor.tariffType} onChange={e => setTariffEditor({ ...tariffEditor, tariffType: e.target.value })} className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white"><option value="FLAT">Flat</option><option value="TIME_OF_USE">Time of use</option><option value="DEMAND_PEAK">Demand peak</option></select>
+              <input required type="number" min="0" step="any" value={tariffEditor.pricePerKwh} onChange={e => setTariffEditor({ ...tariffEditor, pricePerKwh: e.target.value })} placeholder={`Base price / ${currency} / kWh`} className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" />
+              <input type="number" min="0" step="any" value={tariffEditor.demandChargePerKw} onChange={e => setTariffEditor({ ...tariffEditor, demandChargePerKw: e.target.value })} placeholder={`Demand charge / ${currency} / kW`} className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" />
+              <select value={tariffEditor.demandWindowMinutes} onChange={e => setTariffEditor({ ...tariffEditor, demandWindowMinutes: Number(e.target.value) })} className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white"><option value={15}>15-minute demand window</option><option value={30}>30-minute demand window</option><option value={60}>60-minute demand window</option></select>
+              <input type="number" min="0" step="any" value={tariffEditor.fixedCharge} onChange={e => setTariffEditor({ ...tariffEditor, fixedCharge: e.target.value })} placeholder={`Fixed charge / ${currency}`} className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" />
+              <input type="number" min="0" step="any" value={tariffEditor.carbonEmissionKgPerKwh} onChange={e => setTariffEditor({ ...tariffEditor, carbonEmissionKgPerKwh: e.target.value })} placeholder="Grid emissions kg / kWh" className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" />
             </div>
-
-            <div className="bg-slate-850 p-3 rounded-lg border border-slate-800 flex items-center justify-between">
-              <div>
-                <span className="text-emerald-400 font-bold block">STANDARD DAY</span>
-                <span className="text-slate-400 text-[11px]">06:00 - 14:00 (All Days)</span>
-              </div>
-              <span className="text-slate-200 font-bold text-sm">$0.15 / kWh</span>
-            </div>
-
-            <div className="bg-slate-850 p-3 rounded-lg border border-slate-800 flex items-center justify-between">
-              <div>
-                <span className="text-rose-400 font-bold block">PEAK DEMAND WINDOW</span>
-                <span className="text-slate-400 text-[11px]">14:00 - 20:00 (Highest Grid Rate)</span>
-              </div>
-              <span className="text-rose-400 font-bold text-sm">$0.28 / kWh</span>
-            </div>
-
-            <div className="bg-slate-850 p-3 rounded-lg border border-slate-800 flex items-center justify-between">
-              <div>
-                <span className="text-emerald-400 font-bold block">STANDARD EVENING</span>
-                <span className="text-slate-400 text-[11px]">20:00 - 24:00 (All Days)</span>
-              </div>
-              <span className="text-slate-200 font-bold text-sm">$0.14 / kWh</span>
-            </div>
-          </div>
+            <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={tariffEditor.allowGridExport} onChange={e => setTariffEditor({ ...tariffEditor, allowGridExport: e.target.checked })} />Grid export permitted by contract</label>
+            {tariffEditor.allowGridExport && <input required type="number" min="0" step="any" value={tariffEditor.exportPricePerKwh} onChange={e => setTariffEditor({ ...tariffEditor, exportPricePerKwh: e.target.value })} placeholder={`Export compensation / ${currency} / kWh`} className="max-w-sm rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" />}
+            {tariffEditor.tariffType !== 'FLAT' && <div className="space-y-2"><div className="flex items-center justify-between"><span className="text-xs text-slate-300">Tariff periods (organization local time)</span><button type="button" onClick={() => setTariffEditor({ ...tariffEditor, periods: [...tariffEditor.periods, { periodName: '', startTime: '00:00', endTime: '23:59', dayType: 'ALL', pricePerKwh: '' }] })} className="text-xs text-emerald-300">Add period</button></div>{tariffEditor.periods.map((period: any, index: number) => <div key={index} className="grid gap-2 sm:grid-cols-5"><input required value={period.periodName} onChange={e => setTariffEditor({ ...tariffEditor, periods: tariffEditor.periods.map((p: any, i: number) => i === index ? { ...p, periodName: e.target.value } : p) })} placeholder="Period name" className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" /><input required type="time" value={period.startTime} onChange={e => setTariffEditor({ ...tariffEditor, periods: tariffEditor.periods.map((p: any, i: number) => i === index ? { ...p, startTime: e.target.value } : p) })} className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" /><input required type="text" placeholder="23:59 or 24:00" value={period.endTime} onChange={e => setTariffEditor({ ...tariffEditor, periods: tariffEditor.periods.map((p: any, i: number) => i === index ? { ...p, endTime: e.target.value } : p) })} className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" /><select value={period.dayType} onChange={e => setTariffEditor({ ...tariffEditor, periods: tariffEditor.periods.map((p: any, i: number) => i === index ? { ...p, dayType: e.target.value } : p) })} className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white"><option>ALL</option><option>WEEKDAY</option><option>WEEKEND</option></select><div className="flex gap-1"><input required type="number" min="0" step="any" value={period.pricePerKwh} onChange={e => setTariffEditor({ ...tariffEditor, periods: tariffEditor.periods.map((p: any, i: number) => i === index ? { ...p, pricePerKwh: e.target.value } : p) })} placeholder="Price/kWh" className="min-w-0 rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" /><button type="button" onClick={() => setTariffEditor({ ...tariffEditor, periods: tariffEditor.periods.filter((_: any, i: number) => i !== index) })} className="px-2 text-rose-300">×</button></div></div>)}</div>}
+            {tariffMessage && <p className="text-xs text-amber-300">{tariffMessage}</p>}
+            <button className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white">Save tariff</button>
+          </form>
+          {!tariffs.length && <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl text-sm text-slate-400">No tariff is configured. Cost optimization is unavailable until tariff values are provided.</div>}
+          {tariffs.map(tariff => <div key={tariff.id} className="bg-slate-900 border border-slate-800 p-5 rounded-xl space-y-3">
+            <div className="flex justify-between"><h3 className="text-sm font-bold text-white">{tariff.tariffName}</h3><button onClick={() => selectTariffForEdit(tariff)} className="text-xs text-emerald-300">Edit</button></div><span className="text-xs text-emerald-300">{tariff.tariffType}</span>
+            <div className="text-xs text-slate-300">Base rate: {currency} {tariff.pricePerKwh} / kWh · Effective from {new Date(tariff.effectiveFrom).toLocaleDateString()}{tariff.effectiveTo ? ` to ${new Date(tariff.effectiveTo).toLocaleDateString()}` : ''}</div>
+            {tariff.periods?.map((period: any) => <div key={period.id} className="flex justify-between border-t border-slate-800 pt-2 text-xs"><span className="text-slate-300">{period.periodName} · {period.startTime}–{period.endTime} · {period.dayType}</span><span className="text-white">{currency} {period.pricePerKwh} / kWh</span></div>)}
+            <div className="grid grid-cols-2 gap-2 border-t border-slate-800 pt-3 text-xs text-slate-400"><span>Grid export: {tariff.allowGridExport ? `${currency} ${tariff.exportPricePerKwh}/kWh` : 'Not allowed'}</span><span>Demand charge: {tariff.demandChargePerKw == null ? 'Not configured' : `${currency} ${tariff.demandChargePerKw}/kW`}</span><span>Demand window: {tariff.demandWindowMinutes} min</span><span>Fixed charge: {currency} {tariff.fixedCharge}</span><span>Emissions factor: {tariff.carbonEmissionKgPerKwh == null ? 'Not configured' : `${tariff.carbonEmissionKgPerKwh} kg/kWh`}</span></div>
+          </div>)}
         </div>
       )}
     </div>

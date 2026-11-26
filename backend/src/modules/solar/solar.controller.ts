@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../../config';
+import '../../middleware/auth';
 
 export const getSolarOverview = async (req: Request, res: Response) => {
   try {
@@ -32,17 +33,18 @@ export const getSolarOverview = async (req: Request, res: Response) => {
 
 export const createSolarInstallation = async (req: Request, res: Response) => {
   try {
-    const orgId = req.user?.organizationId!;
+    const orgId = req.user!.organizationId;
     const { buildingId, capacityKw } = req.body;
-    if (!buildingId || !capacityKw) {
-      return res.status(400).json({ error: 'Building ID and capacity are required.' });
-    }
+    const capacity = Number(capacityKw);
+    if (!buildingId || !Number.isFinite(capacity) || capacity <= 0) return res.status(400).json({ error: 'Building ID and a positive configured capacity in kW are required.' });
+    const building = await prisma.building.findFirst({ where: { id: String(buildingId), organizationId: orgId } });
+    if (!building) return res.status(404).json({ error: 'Building not found in this organization.' });
 
     const installation = await prisma.solarInstallation.create({
       data: {
         organizationId: orgId,
-        buildingId,
-        capacityKw: parseFloat(capacityKw),
+        buildingId: building.id,
+        capacityKw: capacity,
         status: 'ACTIVE',
       },
     });

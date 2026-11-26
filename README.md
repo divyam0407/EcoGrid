@@ -11,10 +11,10 @@ EcoGrid is an operational energy intelligence and mathematical optimization plat
 - 📅 **Operational Intelligence Engine:** Compares validated meter readings with academic timetables, calendars, configured room hours, and available occupancy evidence to surface explainable operational patterns for review.
 - 📈 **Predictive Analytics:** Tenant-scoped model registry, background training, explicit activation/rollback, baseline comparison, chronological holdouts, persisted forecasts, and prediction-versus-actual monitoring. ABC demo results are synthetic-demo diagnostics, not real-world accuracy claims.
 - 🚨 **Anomaly Intelligence:** Prior same-local-hour weekday median/MAD comparisons with persisted evidence and review workflow. Anomalies do not automatically become savings recommendations.
-- ⚡ **Mathematical Optimization Engine (MILP):** Formulated in PuLP (CBC Solver) to optimize multi-source energy dispatch (Grid, Rooftop Solar, Battery Bank) under time-of-use tariffs, battery SOC physics, and peak demand constraints.
-- ☀️ **Solar & Battery Storage Management:** State-of-charge (SOC %) monitoring, degradation cost factoring, and peak demand shaving.
+- ⚡ **Mathematical Optimization Engine (MILP):** SciPy HiGHS mixed-integer optimization for configured grid, solar and battery dispatch, with explicit infeasibility handling and no generated fallback schedules.
+- ☀️ **Solar & Battery Storage Management:** Organization-configured equipment, unitized state-of-charge readings, tariff settings, and dispatch inputs.
 - 💡 **Actionable Recommendation Engine:** Evidence-backed operational interventions with review workflows. Savings are only reported when a validated calculation supports them.
-- 🔮 **Campus Energy Digital Twin:** Data-driven sandbox simulating hypothetical changes (e.g. compressing hours to 5 PM, hybrid attendance, expanding solar arrays) completely isolated from live meter records.
+- 🔮 **Campus Energy Digital Twin:** Saved, duplicated, executed and compared simulated scenarios using selected organization forecasts, tariffs, equipment and explicit assumptions.
 - 📄 **Executive Reporting & Scope 2 Carbon Analytics:** Automatic generation of daily, weekly, and monthly audits with configurable grid carbon emission factors.
 - 💬 **AI-Powered Energy Assistant:** Grounded Natural Language Question-Answering assistant providing direct citations to database meter logs and optimization runs.
 
@@ -41,6 +41,12 @@ the intelligence service. In Docker Compose, model artifacts persist in the
 [`docs/A8-forecasting.md`](docs/A8-forecasting.md) for model lifecycle, features,
 validation methodology, and limitations. Weather is unavailable in persisted
 historical readings, and actual occupancy is not yet a forecast feature.
+
+Energy optimization requires an active forecast model and configured tariff.
+Buildings with solar also require an explicit hourly solar scenario profile until
+a weather-backed solar forecast source is configured. Results are simulated or
+estimated, never verified savings. See [A9 energy optimization](docs/A9-energy-optimization.md)
+for equations, limits, APIs, and rollout requirements.
 
 ### 3. Configure PostgreSQL and start the backend
 ```bash

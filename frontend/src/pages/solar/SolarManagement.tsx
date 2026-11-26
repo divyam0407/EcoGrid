@@ -57,20 +57,20 @@ export const SolarManagement: React.FC = () => {
             <SunMedium className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-xl font-bold text-white font-mono">
-            {solarData?.totalCapacityKw || 120} <span className="text-xs font-normal text-slate-400 font-sans">kW</span>
+            {solarData?.totalCapacityKw ?? '—'} <span className="text-xs font-normal text-slate-400 font-sans">kW</span>
           </div>
-          <div className="text-[10px] text-emerald-400 mt-1">Rooftop Photovoltaic Arrays</div>
+            <div className="text-[10px] text-slate-400 mt-1">Configured installations only</div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
           <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[11px] font-medium uppercase tracking-wider">Total Solar Energy</span>
+            <span className="text-[11px] font-medium uppercase tracking-wider">Recent Solar Readings</span>
             <Zap className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-xl font-bold text-amber-400 font-mono">
-            {solarData?.totalGeneratedKwh?.toLocaleString() || '38,400'} <span className="text-xs font-normal text-slate-400 font-sans">kWh</span>
+            {solarData?.totalGeneratedKwh?.toLocaleString() ?? '—'} <span className="text-xs font-normal text-slate-400 font-sans">kWh</span>
           </div>
-          <div className="text-[10px] text-slate-400 mt-1">Cumulative clean generation</div>
+          <div className="text-[10px] text-slate-400 mt-1">Sum of latest stored generation readings</div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
@@ -78,8 +78,8 @@ export const SolarManagement: React.FC = () => {
             <span className="text-[11px] font-medium uppercase tracking-wider">Solar Fraction</span>
             <Activity className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="text-xl font-bold text-emerald-400 font-mono">20.8%</div>
-          <div className="text-[10px] text-slate-400 mt-1">Of campus total consumption</div>
+          <div className="text-xl font-bold text-emerald-400 font-mono">Unavailable</div>
+          <div className="text-[10px] text-slate-400 mt-1">Requires aligned generation and demand intervals</div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
@@ -88,9 +88,9 @@ export const SolarManagement: React.FC = () => {
             <BatteryCharging className="w-4 h-4 text-purple-400" />
           </div>
           <div className="text-xl font-bold text-white font-mono">
-            100% <span className="text-xs font-normal text-slate-400 font-sans">Absorbed</span>
+            Unavailable
           </div>
-          <div className="text-[10px] text-emerald-400 mt-1">0 kWh curtailed via battery routing</div>
+          <div className="text-[10px] text-slate-400 mt-1">Dispatch and curtailment require an optimization run</div>
         </div>
       </div>
 
@@ -105,7 +105,7 @@ export const SolarManagement: React.FC = () => {
 
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={solarData?.recentReadings?.reverse() || []} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+            <AreaChart data={[...(solarData?.recentReadings || [])].reverse()} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
               <defs>
                 <linearGradient id="solarGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
@@ -121,6 +121,8 @@ export const SolarManagement: React.FC = () => {
           </ResponsiveContainer>
         </div>
       </div>
+      {!loading && !solarData?.totalInstallations && <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-sm text-slate-400">No solar installations are configured for this organization. Solar generation and self-consumption metrics are unavailable.</div>}
+      {!loading && solarData?.totalInstallations > 0 && !solarData?.recentReadings?.length && <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-sm text-slate-400">Installations are configured, but no generation readings have been recorded.</div>}
     </div>
   );
 };

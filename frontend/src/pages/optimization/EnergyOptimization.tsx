@@ -1,264 +1,86 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Activity, AlertCircle, RefreshCw, ShieldCheck } from 'lucide-react';
 import api from '../../services/api';
-import {
-  Cpu,
-  Zap,
-  SunMedium,
-  BatteryCharging,
-  DollarSign,
-  TrendingDown,
-  RefreshCw,
-  CheckCircle2,
-  Sliders,
-  ArrowRight,
-  ShieldCheck,
-} from 'lucide-react';
-import {
-  ResponsiveContainer,
-  ComposedChart,
-  Area,
-  Bar,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Legend,
-} from 'recharts';
+import { useAuth } from '../../context/AuthContext';
+
+type Building = { id: string; name: string; solar: { id: string }[]; batteries: { id: string }[] };
+type Result = { feasible: boolean; solver_status: string; data_status: string; currency: string | null;
+  total_baseline_cost: number | null; total_optimized_cost: number | null; total_estimated_savings: number | null;
+  savings_percentage: number | null; peak_demand_baseline_kw: number; peak_demand_optimized_kw: number;
+  solar_self_consumption_kwh: number; solar_export_kwh: number; solar_curtailed_kwh: number;
+  total_grid_import_kwh: number; constraints_binding: string[]; explanations: string[]; limitations: string[];
+  total_grid_emissions_kg: number | null;
+  tariff_periods_used: string[];
+  schedule: { timestamp: string; demand_kw: number; solar_to_load_kw: number; solar_to_battery_kw: number;
+    solar_export_kw: number; solar_curtailed_kw: number; grid_import_kw: number; battery_charge_kw: number;
+    battery_discharge_kw: number; battery_soc_kwh: number | null; tariff_per_kwh: number }[] };
+
+const panel = 'bg-slate-900 border border-slate-800 rounded-xl';
 
 export const EnergyOptimization: React.FC = () => {
-  const [optResult, setOptResult] = useState<any>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [horizon, setHorizon] = useState<number>(24);
-  const [batteryCap, setBatteryCap] = useState<number>(150);
-  const [peakLimit, setPeakLimit] = useState<string>('');
+  const { user } = useAuth();
+  const [buildings, setBuildings] = useState<Building[]>([]);
+  const [tariffs, setTariffs] = useState<any[]>([]);
+  const [buildingId, setBuildingId] = useState('');
+  const [tariffId, setTariffId] = useState('');
+  const [horizon, setHorizon] = useState(24);
+  const [solarInput, setSolarInput] = useState('');
+  const [result, setResult] = useState<Result | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    runOptimization();
-  }, []);
+  useEffect(() => { Promise.all([api.get('/buildings'), user?.organization?.id ? api.get(`/organizations/${user.organization.id}`) : Promise.resolve({ data: { organization: { tariffs: [] } } })]).then(([b, o]) => {
+    const rows = b.data.buildings || []; setBuildings(rows); if (rows.length) setBuildingId(rows[0].id);
+    const configured = o.data.organization?.tariffs || []; setTariffs(configured); if (configured.length) setTariffId(configured[0].id);
+  }).catch(() => setError('Could not load organization buildings or tariffs.')); }, [user?.organization?.id]);
 
-  const runOptimization = async () => {
-    setLoading(true);
+  const selected = buildings.find(b => b.id === buildingId);
+  const run = async () => {
+    setError(''); setResult(null); setLoading(true);
     try {
-      const res = await api.post('/optimization/run', {
-        horizonHours: horizon,
-        batteryCapacityKwh: batteryCap,
-        peakDemandLimitKw: peakLimit ? parseFloat(peakLimit) : undefined,
-      });
-      setOptResult(res.data);
-    } catch (err) {
-      console.error('Optimization run failed:', err);
-    } finally {
-      setLoading(false);
-    }
+      const solarGenerationKw = solarInput.trim() ? solarInput.split(',').map(v => Number(v.trim())) : undefined;
+      if (solarGenerationKw?.some(v => !Number.isFinite(v) || v < 0)) throw new Error('Solar forecast values must be non-negative numbers separated by commas.');
+      if (!tariffId) throw new Error('Select an applicable configured tariff.');
+      const response = await api.post('/optimization/run', { buildingId, tariffId, horizonHours: horizon, solarGenerationKw });
+      setResult(response.data);
+    } catch (e: any) { setError(e.response?.data?.error || e.message || 'Optimization could not run.'); }
+    finally { setLoading(false); }
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">Mathematical Energy Optimization Engine</h1>
-          <p className="text-xs text-slate-400">
-            Mixed-Integer Linear Programming (MILP) cost minimization, peak demand shaving & battery arbitrage
-          </p>
-        </div>
+  const money = (value: number | null | undefined) => value == null ? 'Unavailable' : `${result?.currency || ''} ${value.toFixed(2)}`.trim();
 
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-2 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
-            <span className="text-slate-400">Battery:</span>
-            <input
-              type="number"
-              value={batteryCap}
-              onChange={(e) => setBatteryCap(Number(e.target.value))}
-              className="w-16 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-white font-mono text-center focus:outline-none"
-            />
-            <span className="text-slate-400">kWh</span>
-          </div>
+  return <div className="space-y-6">
+    <header className="flex flex-wrap items-center justify-between gap-4">
+      <div><h1 className="text-xl font-bold text-white">Energy Optimization</h1>
+        <p className="text-xs text-slate-400 mt-1">Tariff-aware dispatch using the selected building’s active forecast and configured equipment.</p></div>
+      <button onClick={run} disabled={loading || !buildingId} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2.5 rounded-lg">
+        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />{loading ? 'Solving…' : 'Run optimization'}
+      </button>
+    </header>
 
-          <button
-            onClick={runOptimization}
-            disabled={loading}
-            className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition-colors shadow-sm"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>{loading ? 'Solving MILP...' : 'Execute Optimizer'}</span>
-          </button>
-        </div>
+    <section className={`${panel} p-5 grid gap-4 md:grid-cols-4`}>
+      <label className="text-xs text-slate-300">Building<select value={buildingId} onChange={e => setBuildingId(e.target.value)} className="mt-2 w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white">
+        {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>
+      <label className="text-xs text-slate-300">Forecast horizon<select value={horizon} onChange={e => setHorizon(Number(e.target.value))} className="mt-2 w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white"><option value={24}>24 hours</option><option value={168}>7 days</option></select></label>
+      <label className="text-xs text-slate-300">Configured tariff<select value={tariffId} onChange={e => setTariffId(e.target.value)} className="mt-2 w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white">{tariffs.map(t => <option key={t.id} value={t.id}>{t.tariffName}</option>)}</select></label>
+      {selected?.solar?.length ? <label className="text-xs text-slate-300">Hourly solar forecast (kW)<input value={solarInput} onChange={e => setSolarInput(e.target.value)} placeholder={`Enter ${horizon} comma-separated forecast values`} className="mt-2 w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white" />
+        <span className="block mt-1 text-[10px] text-amber-300">Explicit scenario assumption; EcoGrid has no configured solar forecast source yet.</span></label> : <div className="text-xs text-slate-400 flex items-center">{selected ? 'No active solar installation. Solar input is zero.' : 'Select a building to view its equipment.'}</div>}
+    </section>
+
+    {error && <div className="bg-rose-950/50 border border-rose-800 rounded-lg p-4 text-sm text-rose-200 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
+    {!result && !error && <div className={`${panel} p-8 text-center text-sm text-slate-400`}><Activity className="mx-auto mb-3 w-6 h-6" />Run an optimization after selecting a building with a ready forecast model and configured tariff.</div>}
+
+    {result && <>
+      <div className={`${panel} p-3 flex flex-wrap items-center gap-2 text-xs text-slate-300`}><ShieldCheck className="w-4 h-4 text-emerald-400" />Solver: <b>{result.solver_status}</b><span className="mx-2 text-slate-600">•</span>Result: <b>{result.data_status}</b><span className="ml-auto text-amber-300">Estimated only; not verified savings.</span></div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {[['Baseline cost', money(result.total_baseline_cost)], ['Optimized cost', money(result.total_optimized_cost)], ['Estimated change', money(result.total_estimated_savings)], ['Grid import', `${result.total_grid_import_kwh.toFixed(2)} kWh`]].map(([label, value]) => <div key={label} className={`${panel} p-4`}><div className="text-[11px] uppercase text-slate-400">{label}</div><div className="mt-2 text-lg font-semibold text-white">{value}</div></div>)}
       </div>
-
-      {/* Primary Financial Comparison Cards (PRD Module 7.3 & 7.8) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* Baseline Operating Cost */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-          <div className="text-[11px] font-medium uppercase tracking-wider text-slate-400 mb-1">
-            Baseline Operating Cost
-          </div>
-          <div className="text-xl font-bold text-slate-300 font-mono">
-            ${optResult?.total_baseline_cost?.toFixed(2) || '1,840.50'}
-          </div>
-          <div className="text-[10px] text-slate-400 mt-1">Unoptimized grid & idle storage</div>
-        </div>
-
-        {/* Optimized Operating Cost */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-          <div className="text-[11px] font-medium uppercase tracking-wider text-slate-400 mb-1">
-            Optimized Operating Cost
-          </div>
-          <div className="text-xl font-bold text-white font-mono">
-            ${optResult?.total_optimized_cost?.toFixed(2) || '1,362.00'}
-          </div>
-          <div className="text-[10px] text-emerald-400 mt-1">Optimal dispatch & peak shaving</div>
-        </div>
-
-        {/* Estimated Savings */}
-        <div className="bg-slate-900 border border-emerald-500/30 bg-emerald-950/15 p-4 rounded-xl">
-          <div className="text-[11px] font-medium uppercase tracking-wider text-emerald-400 mb-1">
-            Estimated Cost Savings
-          </div>
-          <div className="text-xl font-bold text-emerald-400 font-mono">
-            ${optResult?.total_estimated_savings?.toFixed(2) || '478.50'}
-          </div>
-          <div className="text-[10px] text-emerald-300/80 mt-1 flex items-center">
-            <TrendingDown className="w-3.5 h-3.5 mr-0.5" />
-            <span>{optResult?.savings_percentage || 26.0}% cost reduction</span>
-          </div>
-        </div>
-
-        {/* Peak Demand Shaving */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-          <div className="text-[11px] font-medium uppercase tracking-wider text-slate-400 mb-1">
-            Peak Demand Shaved
-          </div>
-          <div className="text-xl font-bold text-amber-400 font-mono">
-            -{optResult?.peak_demand_reduction_kw || 33.0} <span className="text-xs font-normal">kW</span>
-          </div>
-          <div className="text-[10px] text-slate-400 mt-1">
-            From {optResult?.peak_demand_baseline_kw || 95} kW down to {optResult?.peak_demand_optimized_kw || 62} kW
-          </div>
-        </div>
+      {!result.feasible && <div className="text-rose-300 text-sm">No dispatch schedule was produced because the constraints are infeasible.</div>}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className={`${panel} p-5`}><h2 className="text-sm font-semibold text-white mb-3">Why this schedule</h2><p className="mb-2 text-xs text-slate-400">Tariff periods used: {result.tariff_periods_used.join(', ') || 'Unavailable'}</p><ul className="space-y-2 text-xs text-slate-300">{result.explanations.map(x => <li key={x}>• {x}</li>)}</ul><h3 className="mt-4 text-xs font-semibold text-white">Limitations</h3><ul className="mt-2 space-y-2 text-xs text-amber-300">{result.limitations.map(x => <li key={x}>• {x}</li>)}</ul></section>
+        <section className={`${panel} p-5`}><h2 className="text-sm font-semibold text-white mb-3">Energy and peak summary</h2><div className="grid grid-cols-2 gap-3 text-xs text-slate-300"><div>Solar self-consumption <b className="block mt-1">{result.solar_self_consumption_kwh.toFixed(2)} kWh</b></div><div>Solar export <b className="block mt-1">{result.solar_export_kwh.toFixed(2)} kWh</b></div><div>Solar curtailed <b className="block mt-1">{result.solar_curtailed_kwh.toFixed(2)} kWh</b></div><div>Grid emissions <b className="block mt-1">{result.total_grid_emissions_kg == null ? 'Unavailable' : `${result.total_grid_emissions_kg.toFixed(2)} kg CO₂`}</b></div><div>Peak baseline → optimized <b className="block mt-1">{result.peak_demand_baseline_kw.toFixed(2)} → {result.peak_demand_optimized_kw.toFixed(2)} kW</b></div><div className="col-span-2">Binding constraints <b className="block mt-1">{result.constraints_binding.join(', ') || 'None reported'}</b></div></div></section>
       </div>
-
-      {/* Solver Verification Banner */}
-      <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl flex items-center justify-between text-xs">
-        <div className="flex items-center space-x-2">
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          <span className="text-slate-300">
-            Mathematical Solver Status:{' '}
-            <strong className="text-emerald-400">{optResult?.solver_status || 'Optimal'}</strong> (CBC / PuLP MILP formulation)
-          </span>
-        </div>
-        <div className="text-slate-400 font-mono text-[11px]">
-          All operational and physical battery limits enforced
-        </div>
-      </div>
-
-      {/* Hourly Dispatch Schedule Chart */}
-      <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-sm font-bold text-white">
-              Optimized Multi-Source Energy Dispatch Profile
-            </h3>
-            <p className="text-[11px] text-slate-400">
-              Coordinated grid import, solar self-consumption, battery charging & peak discharge
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <span className="flex items-center space-x-1.5 text-slate-300">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
-              <span>Grid Import</span>
-            </span>
-            <span className="flex items-center space-x-1.5 text-slate-300">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-              <span>Solar Used</span>
-            </span>
-            <span className="flex items-center space-x-1.5 text-slate-300">
-              <span className="w-2.5 h-2.5 rounded-full bg-purple-400"></span>
-              <span>Battery Discharge</span>
-            </span>
-            <span className="flex items-center space-x-1.5 text-slate-300">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-              <span>Battery SOC (%)</span>
-            </span>
-          </div>
-        </div>
-
-        <div className="h-80 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart
-              data={optResult?.schedule || []}
-              margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis
-                dataKey="timestamp"
-                stroke="#64748b"
-                tickFormatter={(t) => t.slice(11, 16)}
-                tick={{ fontSize: 10 }}
-              />
-              <YAxis yAxisId="power" stroke="#64748b" tick={{ fontSize: 10 }} label={{ value: 'kW', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 10 }} />
-              <YAxis yAxisId="soc" orientation="right" domain={[0, 100]} stroke="#10b981" tick={{ fontSize: 10 }} label={{ value: 'SOC %', angle: 90, position: 'insideRight', fill: '#10b981', fontSize: 10 }} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
-                labelFormatter={(l) => new Date(l).toLocaleString()}
-              />
-              <Bar yAxisId="power" dataKey="solar_used_kw" stackId="a" fill="#f59e0b" name="Solar (kW)" />
-              <Bar yAxisId="power" dataKey="battery_discharge_kw" stackId="a" fill="#a855f7" name="Battery Discharge (kW)" />
-              <Bar yAxisId="power" dataKey="grid_import_kw" stackId="a" fill="#3b82f6" name="Grid Import (kW)" />
-              <Line yAxisId="soc" type="monotone" dataKey="battery_soc_percent" stroke="#10b981" strokeWidth={2.5} dot={false} name="Battery SOC (%)" />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Granular Optimization Schedule Table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-white">24-Hour Dispatch Plan</h3>
-          <span className="text-[10px] text-slate-400 font-mono">
-            {optResult?.schedule?.length || 0} Optimization Time Steps
-          </span>
-        </div>
-
-        <div className="overflow-x-auto max-h-80">
-          <table className="w-full text-left text-xs text-slate-300">
-            <thead className="bg-slate-850 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800 sticky top-0">
-              <tr>
-                <th className="px-4 py-2.5">Time</th>
-                <th className="px-4 py-2.5">Tariff ($/kWh)</th>
-                <th className="px-4 py-2.5">Demand (kW)</th>
-                <th className="px-4 py-2.5">Solar (kW)</th>
-                <th className="px-4 py-2.5">Grid (kW)</th>
-                <th className="px-4 py-2.5">Batt Charge (kW)</th>
-                <th className="px-4 py-2.5">Batt Discharge (kW)</th>
-                <th className="px-4 py-2.5">SOC (%)</th>
-                <th className="px-4 py-2.5">Savings ($)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60 font-mono">
-              {optResult?.schedule?.map((s: any, idx: number) => (
-                <tr key={idx} className="hover:bg-slate-800/40">
-                  <td className="px-4 py-2 text-slate-300">
-                    {new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </td>
-                  <td className="px-4 py-2 text-slate-400">${s.tariff_per_kwh.toFixed(2)}</td>
-                  <td className="px-4 py-2 text-white font-bold">{s.demand_kw}</td>
-                  <td className="px-4 py-2 text-amber-400">{s.solar_used_kw}</td>
-                  <td className="px-4 py-2 text-blue-400">{s.grid_import_kw}</td>
-                  <td className="px-4 py-2 text-emerald-400">{s.battery_charge_kw > 0 ? `+${s.battery_charge_kw}` : '-'}</td>
-                  <td className="px-4 py-2 text-purple-400">{s.battery_discharge_kw > 0 ? `-${s.battery_discharge_kw}` : '-'}</td>
-                  <td className="px-4 py-2 text-emerald-400 font-bold">{s.battery_soc_percent}%</td>
-                  <td className="px-4 py-2 text-emerald-400 font-bold font-sans">
-                    {s.savings > 0 ? `+$${s.savings.toFixed(2)}` : '$0.00'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
+      <section className={`${panel} overflow-x-auto`}><h2 className="p-4 text-sm font-semibold text-white">Dispatch schedule · kW average power</h2><table className="w-full text-left text-xs"><thead className="bg-slate-950 text-slate-400"><tr>{['Interval','Demand','Solar → load','Solar → battery','Grid import','Charge','Discharge','SOC kWh','Tariff / kWh'].map(x => <th className="px-3 py-2" key={x}>{x}</th>)}</tr></thead><tbody>{result.schedule.map(row => <tr key={row.timestamp} className="border-t border-slate-800 text-slate-300"><td className="px-3 py-2 whitespace-nowrap">{new Date(row.timestamp).toLocaleString()}</td><td className="px-3 py-2">{row.demand_kw.toFixed(2)}</td><td className="px-3 py-2">{row.solar_to_load_kw.toFixed(2)}</td><td className="px-3 py-2">{row.solar_to_battery_kw.toFixed(2)}</td><td className="px-3 py-2">{row.grid_import_kw.toFixed(2)}</td><td className="px-3 py-2">{row.battery_charge_kw.toFixed(2)}</td><td className="px-3 py-2">{row.battery_discharge_kw.toFixed(2)}</td><td className="px-3 py-2">{row.battery_soc_kwh?.toFixed(2) ?? '—'}</td><td className="px-3 py-2">{row.tariff_per_kwh.toFixed(4)}</td></tr>)}</tbody></table></section>
+    </>}
+  </div>;
 };

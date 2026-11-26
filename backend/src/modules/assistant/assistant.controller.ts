@@ -34,7 +34,7 @@ export const queryEnergyAssistant = async (req: Request, res: Response) => {
     });
 
     const latestOpt = await prisma.optimizationRun.findFirst({
-      where: { organizationId: orgId },
+      where: { organizationId: orgId, solverStatus: 'OPTIMAL', baselineCost: { not: null }, optimizedCost: { not: null }, estimatedSavings: { not: null } },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -70,12 +70,13 @@ export const queryEnergyAssistant = async (req: Request, res: Response) => {
       }
     } else if (q.includes('optimization') || q.includes('battery') || q.includes('solar')) {
       if (latestOpt) {
-        answer = `The latest MILP mathematical optimization run (${latestOpt.solverStatus}) achieved **$${latestOpt.estimatedSavings.toFixed(2)}** in estimated interval cost savings.\n- Baseline grid expenditure: **$${latestOpt.baselineCost.toFixed(2)}**\n- Optimized expenditure: **$${latestOpt.optimizedCost.toFixed(2)}**\n\nThe solver orchestrated battery charging during peak midday solar generation (11:00 AM - 1:30 PM) and scheduled battery discharge during high-tariff evening hours (2:00 PM - 7:00 PM) to shave peak demand.`;
+        const runCurrency = JSON.parse(latestOpt.resultData).currency || currency;
+        answer = `The latest solver-backed run is labeled as an estimate, not measured savings. Estimated cost change: **${runCurrency} ${latestOpt.estimatedSavings?.toFixed(2)}**.\n- Baseline cost: **${runCurrency} ${latestOpt.baselineCost?.toFixed(2)}**\n- Optimized cost: **${runCurrency} ${latestOpt.optimizedCost?.toFixed(2)}**\n\nThe persisted dispatch schedule and its assumptions are available in the Energy Optimization history.`;
         citations = [
-          { type: 'optimization_run', label: 'MILP Solver Result', value: `$${latestOpt.estimatedSavings} saved` },
+          { type: 'optimization_run', label: 'Estimated optimization result', value: `${runCurrency} ${latestOpt.estimatedSavings}` },
         ];
       } else {
-        answer = `The mathematical optimization model schedules battery charging during 11:00 AM - 1:30 PM solar surplus and dispatches battery power during the 2:00 PM - 8:00 PM peak tariff window ($0.28/kWh), producing a 24-28% reduction in grid expenditure.`;
+        answer = 'No feasible optimization run is stored for this organization. Configure an active forecast model and tariff, then run Energy Optimization. EcoGrid does not estimate savings or dispatch schedules from missing inputs.';
       }
     } else {
       answer = `Hello! I am EcoGrid's Operational Energy Assistant. I analyze your organization's energy data grounded in actual meter readings, academic timetables, tariffs, and optimization runs.\n\nYou can ask me:\n- *"Which building consumes the most electricity?"*\n- *"What operational inefficiencies were detected after class hours?"*\n- *"How much money can we save by scheduling battery storage?"*\n- *"What are the current open anomalies?"*`;

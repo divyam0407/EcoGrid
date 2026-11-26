@@ -94,6 +94,22 @@ are not committed to Git. Activate a ready version explicitly; a previous ready
 version can be re-activated as rollback. See [A8 forecasting](A8-forecasting.md)
 for data requirements and evaluation limits.
 
+## A9 optimization migration and data safety
+
+A9 adds two forward-only Prisma migrations. Before any shared or production rollout,
+apply the migration to an empty disposable PostgreSQL database with
+`npx prisma migrate deploy`, verify `npx prisma migrate status`, and exercise the
+optimization and scenario suites there. Then schedule the same additive migration
+as a backed-up deployment step. Do not run `prisma db push`, `migrate reset`, or
+the seed script against the ABC University database. The A9 tests are guarded to
+`ecogrid_a9_test` and do not target `ecogrid_db` or SQLite.
+
+Optimization uses the SciPy/HiGHS MILP backend included by the existing SciPy
+dependency. No separate solver binary is installed. Review
+[`A9 energy optimization`](A9-energy-optimization.md) for the model assumptions,
+tariff requirements, solar forecast input requirements, and current interval
+limitations before enabling user-facing optimization.
+
 ## 2. Production Docker Compose Deployment
 
 Set `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, a strong `JWT_SECRET`,

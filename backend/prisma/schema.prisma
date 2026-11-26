@@ -103,6 +103,7 @@ model Building {
   recommendations  Recommendation[]
   optimizations    OptimizationRun[]
   forecastModels   ForecastModel[]
+  scenarios        Scenario[]
 }
 
 model Department {
@@ -343,9 +344,15 @@ model ElectricityTariff {
   organizationId String
   tariffName     String
   tariffType     String    @default("TIME_OF_USE") // FLAT, TIME_OF_USE, TIERED, DEMAND_PEAK
-  pricePerKwh    Float     @default(0.15)
+  pricePerKwh    Float
   effectiveFrom  DateTime  @default(now())
   effectiveTo    DateTime?
+  allowGridExport Boolean   @default(false)
+  exportPricePerKwh Decimal? @db.Decimal(12, 6)
+  demandChargePerKw Decimal? @db.Decimal(12, 6)
+  demandWindowMinutes Int    @default(60)
+  fixedCharge Decimal @default(0) @db.Decimal(12, 4)
+  carbonEmissionKgPerKwh Decimal? @db.Decimal(12, 6)
 
   organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   periods      TariffPeriod[]
@@ -403,6 +410,10 @@ model Battery {
   chargingEfficiency    Float  @default(0.92)
   dischargingEfficiency Float  @default(0.92)
   degradationCost       Float  @default(0.015)
+  status                String @default("ACTIVE")
+  allowGridCharging     Boolean @default(false)
+  reserveSocKwh         Float?
+  finalSocKwh           Float?
 
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   building     Building         @relation(fields: [buildingId], references: [id], onDelete: Cascade)
@@ -415,6 +426,7 @@ model BatteryReading {
   batteryId        String
   timestamp        DateTime
   stateOfCharge    Float
+  stateOfChargeKwh Float?
   chargePowerKw    Float    @default(0)
   dischargePowerKw Float    @default(0)
 
@@ -637,9 +649,9 @@ model OptimizationRun {
   organizationId   String
   buildingId       String
   optimizationType String   @default("MILP_TARIFF_BATTERY")
-  baselineCost     Float
-  optimizedCost    Float
-  estimatedSavings Float
+  baselineCost     Float?
+  optimizedCost    Float?
+  estimatedSavings Float?
   solverStatus     String   @default("OPTIMAL")
   configuration    String // JSON string
   resultData       String // JSON string
@@ -659,8 +671,13 @@ model Scenario {
   configuration  String // JSON string
   resultData     String? // JSON string
   createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  buildingId     String?
+  status         String   @default("DRAFT")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building     Building? @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+  @@index([organizationId, buildingId, createdAt])
 }
 
 model AuditLog {

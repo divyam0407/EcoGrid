@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { getSolarOverview, createSolarInstallation } from './solar.controller';
-import { authenticate } from '../../middleware/auth';
+import { authenticate, requireOrganizationMembership, requireRole } from '../../middleware/auth';
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireOrganizationMembership);
 
 router.get('/', getSolarOverview);
-router.post('/', createSolarInstallation);
+router.post('/', requireRole(['ORG_ADMIN', 'ENERGY_MANAGER']), createSolarInstallation);
 
 export default router;

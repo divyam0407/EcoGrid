@@ -68,18 +68,32 @@ Base URL: `/api/v1`
 
 ### 7. Mathematical Optimization
 - `POST /api/v1/optimization/run`
-  - Body: `{ horizonHours: 24, batteryCapacityKwh: 150, peakDemandLimitKw: 75 }`
-  - Returns MILP solver results, baseline vs optimized operating cost, and hourly battery dispatch schedule.
+  - Body: `{ buildingId, horizonHours: 24, peakDemandLimitKw?, solarGenerationKw? }`.
+  - Requires one active main-feeder meter, active A8 forecast, one consistent organization tariff and explicit hourly solar input when solar is installed. It uses configured batteries; it does not invent equipment or pricing.
+  - Returns HiGHS MILP status, cost components, energy dispatch, constraints, tariff labels and limitations. Infeasible solver runs return diagnostics and no schedule.
 - `GET /api/v1/optimization/history`
 - `GET /api/v1/optimization/:id`
 
 ### 8. Campus Digital Twin
-- `POST /api/v1/scenarios/run`
-  - Body: `{ name, description, modifications: { shift_operating_hours_end, occupancy_scaling_factor, solar_capacity_multiplier, battery_capacity_kwh } }`
-  - Runs isolated scenario simulation without touching live telemetry.
 - `GET /api/v1/scenarios`
+- `POST /api/v1/scenarios` and `PUT /api/v1/scenarios/:id`
+  - Save/edit drafts with organization building and explicit forecast, tariff and scenario assumptions.
+- `POST /api/v1/scenarios/:id/duplicate` and `POST /api/v1/scenarios/:id/run`
+  - Duplicate scenario configuration or run it in simulation mode. Results are estimates and do not modify meter readings.
+- `POST /api/v1/scenarios/compare`
+  - Body: `{ scenarioIds: ["...", "..."] }`. Compares completed scenarios for the same building, tariff, currency and timestamps.
 
-### 9. AI Energy Assistant
+### 9. Equipment and Tariffs
+- `POST /api/v1/organizations/:id/tariffs` and `PUT /api/v1/organizations/:id/tariffs/:tariffId`
+  - Organization administrators configure import rates, local tariff periods, contractual export permission/compensation, demand charges, fixed charges and optional emissions factor.
+- `POST /api/v1/batteries` / `PUT /api/v1/batteries/:id`
+  - Configure explicit capacity, SOC limits, power, efficiencies, cycle penalty and grid-charge permission.
+- `POST /api/v1/batteries/:id/readings`
+  - Record unitized SOC in kWh and power in kW. Simultaneous charging/discharging and configured-limit violations are rejected.
+- `POST /api/v1/solar`
+  - Add an installation using explicitly supplied building and capacity.
+
+### 10. AI Energy Assistant
 - `POST /api/v1/assistant/query`
   - Body: `{ message: "Which building consumes the most electricity?" }`
   - Returns grounded answer with exact database citations.

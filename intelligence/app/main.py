@@ -343,12 +343,20 @@ def simulate_scenario(req: ScenarioSimulationRequest):
 
 @app.post("/api/solar/forecast")
 def forecast_solar(payload: Dict[str, Any]):
-    capacity = float(payload.get("capacity_kw", 120.0))
     timestamps = payload.get("timestamps", [])
-    clouds = payload.get("cloud_cover_percent", None)
-    model = SolarGenerationModel(capacity_kw=capacity)
-    gen = model.calculate_generation(timestamps, clouds)
-    return {"capacity_kw": capacity, "readings": gen}
+    try:
+        capacity = float(payload["capacity_kw"])
+        derating = float(payload["derating_factor"])
+        clouds = payload["cloud_cover_percent"]
+        if capacity <= 0 or not 0 < derating <= 1 or not isinstance(timestamps, list) or not timestamps:
+            raise ValueError("capacity, derating and non-empty timestamps are required")
+        if not isinstance(clouds, list) or len(clouds) != len(timestamps) or any(not isinstance(x, (int, float)) or x < 0 or x > 100 for x in clouds):
+            raise ValueError("cloud cover must be explicitly supplied in percent for every timestamp")
+        model = SolarGenerationModel(capacity_kw=capacity, derating_factor=derating)
+        gen = model.calculate_generation(timestamps, clouds)
+        return {"status": "SIMULATED", "assumptions": {"capacity_kw": capacity, "derating_factor": derating, "cloud_cover_percent": clouds}, "readings": gen}
+    except (KeyError, TypeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 if __name__ == "__main__":
     import uvicorn

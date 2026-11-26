@@ -42,6 +42,13 @@ function tariffRateAt(reading: Reading, tariffs: any[], timezone: string): Prism
   const matching = tariff.periods.filter((p: any) => (p.dayType === 'ALL' || (p.dayType === 'WEEKEND' && local.weekend) || (p.dayType === 'WEEKDAY' && !local.weekend)) && timeWindow(p.startTime, p.endTime, local.time));
   return matching.length === 1 ? decimal(matching[0].pricePerKwh) : null;
 }
+function tariffPeriodAt(reading: Reading, tariff: any, timezone: string): string | null {
+  if (reading.timestamp < tariff.effectiveFrom || (tariff.effectiveTo && reading.timestamp > tariff.effectiveTo)) return null;
+  if (!tariff.periods.length) return `${tariff.tariffName} (base rate)`;
+  const local = localParts(reading.timestamp, timezone);
+  const matches = tariff.periods.filter((p: any) => (p.dayType === 'ALL' || (p.dayType === 'WEEKEND' && local.weekend) || (p.dayType === 'WEEKDAY' && !local.weekend)) && timeWindow(p.startTime, p.endTime, local.time));
+  return matches.length === 1 ? `${tariff.tariffName}: ${matches[0].periodName}` : null;
+}
 function observedOccupancy(reading: Reading, meter: any, records: any[]) {
   const tolerance = Math.max(1, Number(reading.intervalMinutes || 60)) * 30000;
   return records.filter(o => o.buildingId === reading.buildingId && (meter.roomId ? o.roomId === meter.roomId : !o.roomId) && !EXCLUDED_OCCUPANCY.includes(o.sourceType) && Math.abs(o.timestamp.getTime() - reading.timestamp.getTime()) <= tolerance).sort((a,b) => Math.abs(a.timestamp.getTime() - reading.timestamp.getTime()) - Math.abs(b.timestamp.getTime() - reading.timestamp.getTime()))[0] || null;
@@ -230,4 +237,4 @@ export function validateOptions(input: any): Options {
   return o;
 }
 
-export { median, tariffRateAt, prepareCandidates };
+export { median, tariffRateAt, tariffPeriodAt, prepareCandidates };

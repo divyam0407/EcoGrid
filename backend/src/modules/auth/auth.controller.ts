@@ -45,25 +45,6 @@ export const register = async (req: Request, res: Response) => {
         },
       });
 
-      // Create default tariff
-      const tariff = await tx.electricityTariff.create({
-        data: {
-          organizationId: org.id,
-          tariffName: 'Campus Time-of-Use Standard',
-          tariffType: 'TIME_OF_USE',
-          pricePerKwh: 0.15,
-        },
-      });
-
-      await tx.tariffPeriod.createMany({
-        data: [
-          { tariffId: tariff.id, periodName: 'OFF_PEAK', startTime: '00:00', endTime: '06:00', pricePerKwh: 0.08, dayType: 'ALL' },
-          { tariffId: tariff.id, periodName: 'STANDARD', startTime: '06:00', endTime: '14:00', pricePerKwh: 0.15, dayType: 'ALL' },
-          { tariffId: tariff.id, periodName: 'PEAK', startTime: '14:00', endTime: '20:00', pricePerKwh: 0.28, dayType: 'ALL' },
-          { tariffId: tariff.id, periodName: 'STANDARD', startTime: '20:00', endTime: '24:00', pricePerKwh: 0.14, dayType: 'ALL' },
-        ],
-      });
-
       return { org, user, member };
     });
 

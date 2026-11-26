@@ -1,174 +1,198 @@
-import pulp
-from typing import List, Dict, Any
-from intelligence.app.api.schemas.optimization_schemas import OptimizationRequest, OptimizationResponse, OptimizationIntervalResult
+from typing import List
+import math
+import numpy as np
+from scipy.optimize import milp, Bounds, LinearConstraint
+from scipy.sparse import coo_matrix
+from intelligence.app.api.schemas.optimization_schemas import (
+    OptimizationRequest, OptimizationResponse, OptimizationIntervalResult,
+)
+
 
 class MathematicalEnergyOptimizer:
-    def __init__(self):
-        pass
+    """Cost-minimizing MILP for interval-average kW and interval kWh accounting."""
 
     def optimize(self, req: OptimizationRequest) -> OptimizationResponse:
-        T = len(req.timestamps)
-        if T == 0:
-            raise ValueError("No timestamps provided for optimization.")
-
-        prob = pulp.LpProblem("EcoGrid_Cost_Optimization", pulp.LpMinimize)
-
-        # Decision Variables for each hour t in 0..T-1
-        grid = [pulp.LpVariable(f"grid_{t}", lowBound=0.0) for t in range(T)]
-        solar_used = [pulp.LpVariable(f"solar_used_{t}", lowBound=0.0) for t in range(T)]
-        solar_to_batt = [pulp.LpVariable(f"solar_to_batt_{t}", lowBound=0.0) for t in range(T)]
-        grid_to_batt = [pulp.LpVariable(f"grid_to_batt_{t}", lowBound=0.0) for t in range(T)]
-        batt_discharge = [pulp.LpVariable(f"batt_discharge_{t}", lowBound=0.0, upBound=req.max_discharge_kw) for t in range(T)]
-        soc = [pulp.LpVariable(f"soc_{t}", lowBound=req.min_soc_kwh, upBound=req.max_soc_kwh) for t in range(T)]
-        
-        # Peak demand variable
-        peak_grid = pulp.LpVariable("peak_grid_demand", lowBound=0.0)
-
-        # Objective Function:
-        # Minimize Grid import cost + Battery cycling degradation cost + Peak demand charge
-        cost_terms = []
-        for t in range(T):
-            tariff = req.tariffs[t]
-            # Total grid import at t is to meet load + grid charging battery
-            total_grid_t = grid[t] + grid_to_batt[t]
-            cost_terms.append(total_grid_t * tariff)
-            
-            # Degradation cost per kWh charged
-            charge_t = solar_to_batt[t] + grid_to_batt[t]
-            cost_terms.append(charge_t * req.battery_degradation_cost_per_kwh)
-
-        # Peak demand penalty
-        if req.peak_demand_charge_per_kw:
-            cost_terms.append(peak_grid * req.peak_demand_charge_per_kw)
-
-        prob += pulp.lpSum(cost_terms)
-
-        # Constraints
-        for t in range(T):
-            demand = req.predicted_demand_kw[t]
-            solar_avail = req.solar_generation_kw[t]
-
-            # 1. Demand Satisfaction: Grid + Solar to load + Battery discharge == Demand
-            prob += grid[t] + solar_used[t] + batt_discharge[t] == demand
-
-            # 2. Solar Generation Limit: Solar used + Solar to battery <= Solar available
-            prob += solar_used[t] + solar_to_batt[t] <= solar_avail
-
-            # 3. Battery Max Charge limit
-            charge_t = solar_to_batt[t] + grid_to_batt[t]
-            prob += charge_t <= req.max_charge_kw
-
-            # 4. State of Charge dynamics (interval = 1 hour)
-            # SOC[t] = SOC[t-1] + charge * eta_ch - discharge / eta_dis
-            prev_soc = req.initial_soc_kwh if t == 0 else soc[t - 1]
-            prob += soc[t] == prev_soc + (charge_t * req.charge_efficiency) - (batt_discharge[t] / req.discharge_efficiency)
-
-            # 5. Peak demand tracker
-            total_grid_t = grid[t] + grid_to_batt[t]
-            prob += peak_grid >= total_grid_t
-
-            # 6. Peak demand limit constraint if configured
-            if req.peak_demand_limit_kw and req.peak_demand_limit_kw > 0:
-                prob += total_grid_t <= req.peak_demand_limit_kw
-
-        # Solve with CBC solver
-        solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=15)
-        status = prob.solve(solver)
-        solver_status_str = pulp.LpStatus[status]
-
-        # Extract Results and Baseline Comparison
-        schedule_results: List[OptimizationIntervalResult] = []
-        total_baseline_cost = 0.0
-        total_optimized_cost = 0.0
-        total_grid_import = 0.0
-        total_solar_used = 0.0
-        total_batt_discharged = 0.0
-        peak_baseline_kw = 0.0
-        peak_optimized_kw = 0.0
-
-        for t in range(T):
-            demand = req.predicted_demand_kw[t]
-            solar_avail = req.solar_generation_kw[t]
-            tariff = req.tariffs[t]
-
-            # In unoptimized baseline: solar satisfies whatever load it can, remainder from grid, battery unused
-            baseline_solar_used = min(solar_avail, demand)
-            baseline_grid_import = max(0.0, demand - baseline_solar_used)
-            baseline_interval_cost = baseline_grid_import * tariff
-            total_baseline_cost += baseline_interval_cost
-            if baseline_grid_import > peak_baseline_kw:
-                peak_baseline_kw = baseline_grid_import
-
-            # Optimized values
-            if solver_status_str in ["Optimal", "Feasible"]:
-                g_load = pulp.value(grid[t]) or 0.0
-                g_batt = pulp.value(grid_to_batt[t]) or 0.0
-                g_total = round(max(0.0, g_load + g_batt), 2)
-                s_used = round(max(0.0, pulp.value(solar_used[t]) or 0.0), 2)
-                s_batt = round(max(0.0, pulp.value(solar_to_batt[t]) or 0.0), 2)
-                b_charge = round(max(0.0, s_batt + g_batt), 2)
-                b_disch = round(max(0.0, pulp.value(batt_discharge[t]) or 0.0), 2)
-                s_curtailed = round(max(0.0, solar_avail - (s_used + s_batt)), 2)
-                soc_val = round(max(req.min_soc_kwh, min(req.max_soc_kwh, pulp.value(soc[t]) or req.initial_soc_kwh)), 2)
+        n = len(req.timestamps)
+        dt = req.interval_hours
+        has_battery = req.battery_available and req.battery_capacity_kwh is not None
+        names = ["grid", "solar_load", "solar_charge", "solar_export", "curtailed", "grid_charge", "discharge", "soc", "charge_mode"]
+        index = {name: [i * len(names) + j for i in range(n)] for j, name in enumerate(names)}
+        peak_idx = n * len(names)
+        variable_count = peak_idx + 1
+        lower = np.zeros(variable_count)
+        upper = np.full(variable_count, np.inf)
+        integrality = np.zeros(variable_count, dtype=int)
+        upper[peak_idx] = np.inf
+        for t in range(n):
+            upper[index["solar_load"][t]] = req.solar_generation_kw[t]
+            upper[index["solar_charge"][t]] = req.solar_generation_kw[t] if has_battery else 0
+            upper[index["solar_export"][t]] = req.solar_generation_kw[t] if req.allow_grid_export else 0
+            upper[index["curtailed"][t]] = req.solar_generation_kw[t]
+            upper[index["grid_charge"][t]] = req.max_charge_kw if has_battery and req.allow_grid_charging else 0
+            upper[index["discharge"][t]] = req.max_discharge_kw if has_battery else 0
+            if has_battery:
+                lower[index["soc"][t]] = max(req.min_soc_kwh, req.reserve_soc_kwh or req.min_soc_kwh)
+                upper[index["soc"][t]] = req.max_soc_kwh
             else:
-                # Fallback heuristics if solver fails
-                g_total = baseline_grid_import
-                s_used = baseline_solar_used
-                b_charge = 0.0
-                b_disch = 0.0
-                s_curtailed = max(0.0, solar_avail - s_used)
-                soc_val = req.initial_soc_kwh
+                upper[index["soc"][t]] = 0
+            upper[index["charge_mode"][t]] = 1
+            integrality[index["charge_mode"][t]] = 1
+        objective = np.zeros(variable_count)
+        for t in range(n):
+            objective[index["grid"][t]] = req.tariffs[t] * dt
+            objective[index["solar_export"][t]] = -(req.export_price_per_kwh or 0) * dt
+            objective[index["solar_charge"][t]] = req.battery_degradation_cost_per_kwh * dt
+            objective[index["grid_charge"][t]] = req.battery_degradation_cost_per_kwh * dt
+            objective[index["discharge"][t]] = req.battery_degradation_cost_per_kwh * dt
+        if req.demand_charge_per_kw is not None:
+            objective[peak_idx] = req.demand_charge_per_kw
+        rows, cols, vals, lows, highs = [], [], [], [], []
 
-            opt_interval_cost = round(g_total * tariff + b_charge * req.battery_degradation_cost_per_kwh, 2)
-            total_optimized_cost += opt_interval_cost
-            total_grid_import += g_total
-            total_solar_used += s_used + (s_batt if solver_status_str in ["Optimal", "Feasible"] else 0.0)
-            total_batt_discharged += b_disch
+        def constraint(coefficients, low=-np.inf, high=np.inf):
+            row = len(lows)
+            for col, coefficient in coefficients.items():
+                if coefficient:
+                    rows.append(row); cols.append(col); vals.append(coefficient)
+            lows.append(low); highs.append(high)
 
-            if g_total > peak_optimized_kw:
-                peak_optimized_kw = g_total
+        for t in range(n):
+            demand = req.predicted_demand_kw[t]
+            pv = req.solar_generation_kw[t]
+            # Sources for facility demand: grid supply (excluding grid charging), PV, battery.
+            g, sl, sc, se, cu, gc, bd, state, mode = [index[k][t] for k in names]
+            constraint({g: 1, gc: -1, sl: 1, bd: 1}, demand, demand)
+            constraint({sl: 1, sc: 1, se: 1, cu: 1}, pv, pv)
+            if has_battery:
+                # Binary mode prevents charging and discharging at the same time.
+                constraint({sc: 1, gc: 1}, high=req.max_charge_kw)
+                constraint({sc: 1, gc: 1, mode: -req.max_charge_kw}, high=0)
+                constraint({bd: 1}, high=req.max_discharge_kw)
+                constraint({bd: 1, mode: req.max_discharge_kw}, high=req.max_discharge_kw)
+                previous = {state: 1, sc: -req.charge_efficiency * dt, gc: -req.charge_efficiency * dt, bd: dt / req.discharge_efficiency}
+                if t:
+                    previous[index["soc"][t - 1]] = -1
+                    constraint(previous, 0, 0)
+                else:
+                    constraint(previous, req.initial_soc_kwh, req.initial_soc_kwh)
+            else:
+                pass
+            constraint({g: 1, peak_idx: -1}, high=0)
+            if req.peak_demand_limit_kw is not None:
+                constraint({g: 1}, high=req.peak_demand_limit_kw)
 
-            interval_savings = round(baseline_interval_cost - opt_interval_cost, 2)
-            soc_percent = round((soc_val / req.battery_capacity_kwh) * 100, 1)
+        if has_battery and req.final_soc_kwh is not None:
+            constraint({index["soc"][-1]: 1}, req.final_soc_kwh, req.final_soc_kwh)
 
-            schedule_results.append(OptimizationIntervalResult(
-                timestamp=req.timestamps[t],
-                demand_kw=round(demand, 2),
-                tariff_per_kwh=round(tariff, 4),
-                solar_available_kw=round(solar_avail, 2),
-                solar_used_kw=s_used,
-                solar_curtailed_kw=s_curtailed,
-                grid_import_kw=g_total,
-                battery_charge_kw=b_charge,
-                battery_discharge_kw=b_disch,
-                battery_soc_kwh=soc_val,
-                battery_soc_percent=soc_percent,
-                cost_baseline=round(baseline_interval_cost, 2),
-                cost_optimized=opt_interval_cost,
-                savings=interval_savings
-            ))
+        matrix = coo_matrix((vals, (rows, cols)), shape=(len(lows), variable_count)).tocsc()
+        solved = milp(objective, integrality=integrality, bounds=Bounds(lower, upper),
+                      constraints=LinearConstraint(matrix, np.asarray(lows), np.asarray(highs)),
+                      options={"time_limit": 30})
+        status = "OPTIMAL" if solved.status == 0 and solved.success else ("INFEASIBLE" if solved.status == 2 else "NOT_SOLVED")
+        if status != "OPTIMAL":
+            return OptimizationResponse(
+                solver_status=status, solver_message=f"SciPy HiGHS MILP solver returned: {solved.message}; no schedule was produced.",
+                optimization_type="MILP (SciPy HiGHS)", feasible=False, objective_value=None,
+                data_status=req.data_status, total_baseline_cost=None, total_optimized_cost=None,
+                total_estimated_savings=None, savings_percentage=None,
+                total_demand_kwh=sum(req.predicted_demand_kw) * dt,
+                solar_generation_kwh=sum(req.solar_generation_kw) * dt,
+                solar_self_consumption_kwh=0, solar_export_kwh=0, solar_curtailed_kwh=0,
+                total_grid_import_kwh=0, total_grid_export_kwh=0, total_battery_charge_kwh=0,
+                total_grid_emissions_kg=None, total_battery_discharged_kwh=0, peak_demand_baseline_kw=0,
+                peak_demand_optimized_kw=0, constraints_binding=[], tariff_periods_used=[],
+                explanations=["The requested constraints are infeasible or the solver did not finish optimally."],
+                limitations=["No fallback schedule or financial estimate is returned when the solver fails."], schedule=[])
 
-        # Peak charges added to baseline and optimized
-        if req.peak_demand_charge_per_kw:
-            total_baseline_cost += peak_baseline_kw * req.peak_demand_charge_per_kw
-            total_optimized_cost += peak_optimized_kw * req.peak_demand_charge_per_kw
+        def val(var_index):
+            return max(0.0, float(solved.x[var_index] or 0.0))
 
-        savings = max(0.0, round(total_baseline_cost - total_optimized_cost, 2))
-        pct_savings = round((savings / total_baseline_cost) * 100, 1) if total_baseline_cost > 0 else 0.0
+        schedule: List[OptimizationIntervalResult] = []
+        solar_self = solar_out = curtail_out = grid_in = grid_out = charged = discharged = 0.0
+        baseline_cost = req.fixed_charge
+        peak_baseline = 0.0
+        binding = set()
+        for t in range(n):
+            pv = req.solar_generation_kw[t]
+            d = req.predicted_demand_kw[t]
+            g, sl, sc, se, cu = map(val, (index["grid"][t], index["solar_load"][t], index["solar_charge"][t], index["solar_export"][t], index["curtailed"][t]))
+            gc, bd = val(index["grid_charge"][t]), val(index["discharge"][t])
+            state = val(index["soc"][t]) if has_battery else None
+            import_baseline = max(0.0, d - min(d, pv))
+            baseline_export = max(0.0, pv - d) if req.allow_grid_export else 0.0
+            baseline_cost += import_baseline * req.tariffs[t] * dt - baseline_export * (req.export_price_per_kwh or 0) * dt
+            peak_baseline = max(peak_baseline, import_baseline)
+            e_cost = g * req.tariffs[t] * dt
+            x_credit = se * (req.export_price_per_kwh or 0) * dt
+            deg_cost = (sc + gc + bd) * req.battery_degradation_cost_per_kwh * dt
+            schedule.append(OptimizationIntervalResult(
+                timestamp=req.timestamps[t], interval_hours=dt, demand_kw=d, solar_available_kw=pv,
+                solar_to_load_kw=sl, solar_to_battery_kw=sc, solar_export_kw=se, solar_curtailed_kw=cu,
+                grid_import_kw=g, grid_to_battery_kw=gc, grid_export_kw=se,
+                battery_charge_kw=sc + gc, battery_discharge_kw=bd, battery_soc_kwh=state,
+                tariff_per_kwh=req.tariffs[t], energy_cost=e_cost,
+                demand_cost=(val(peak_idx) * req.demand_charge_per_kw if req.demand_charge_per_kw else 0) / n,
+                degradation_cost=deg_cost, export_credit=x_credit,
+                total_cost=e_cost + deg_cost - x_credit + req.fixed_charge / n))
+            solar_self += (sl + sc) * dt
+            solar_out += se * dt
+            curtail_out += cu * dt
+            grid_in += g * dt
+            grid_out += se * dt
+            charged += (sc + gc) * dt
+            discharged += bd * dt
+            if abs(g - (req.peak_demand_limit_kw or math.inf)) < 1e-4 and req.peak_demand_limit_kw:
+                binding.add("contracted_peak_demand_limit")
+            if has_battery and abs(state - max(req.min_soc_kwh, req.reserve_soc_kwh or req.min_soc_kwh)) < 1e-4:
+                binding.add("minimum_state_of_charge_or_reserve")
+            if has_battery and abs(state - req.max_soc_kwh) < 1e-4:
+                binding.add("maximum_state_of_charge")
+            if has_battery and abs(sc + gc - req.max_charge_kw) < 1e-4:
+                binding.add("maximum_battery_charge_power")
+            if has_battery and abs(bd - req.max_discharge_kw) < 1e-4:
+                binding.add("maximum_battery_discharge_power")
+            if abs(sl + sc + se + cu - pv) < 1e-4 and pv > 0:
+                binding.add("solar_generation_allocation")
 
+        optimized = float(solved.fun or 0) + req.fixed_charge
+        baseline_cost += peak_baseline * (req.demand_charge_per_kw or 0)
+        savings = baseline_cost - optimized
+        explanations = ["Grid import, available solar and battery discharge balance facility demand in every interval.",
+                       "Solar is allocated to demand, charging and permitted exports; remaining generation is explicitly curtailed."]
+        if has_battery:
+            explanations.append("Battery state of charge includes charge/discharge efficiency and is constrained by configured SOC and power limits.")
+        if req.allow_grid_charging:
+            explanations.append("Grid charging is enabled by the supplied configuration.")
+        if req.allow_grid_export:
+            explanations.append("Grid export is enabled with the explicitly supplied compensation rate.")
+        period_labels = sorted(set(req.tariff_periods))
+        if period_labels:
+            explanations.append("Configured tariff periods considered: " + ", ".join(period_labels) + ".")
+        if charged > 0 or discharged > 0:
+            explanations.append("Battery dispatch was selected using interval import prices, solar availability, throughput penalty and SOC constraints across the horizon.")
+        limitations = []
+        if req.demand_charge_per_kw is None:
+            limitations.append("No demand charge was configured; demand-charge savings are unavailable.")
+        elif req.interval_hours != req.demand_window_hours:
+            limitations.append("Demand-charge aggregation does not match the supplied interval length.")
+        else:
+            limitations.append("Demand charge is a selected-horizon peak proxy; billing-cycle peaks, ratchets and prior peak demand are not modeled.")
+        if req.carbon_emission_kg_per_kwh is None:
+            limitations.append("Grid emissions are unavailable because no organization emissions factor is configured.")
+        if req.data_status != "MEASURED":
+            limitations.append("Results use scenario or forecast inputs and are simulated/estimated, not measured savings.")
         return OptimizationResponse(
-            solver_status=solver_status_str,
-            optimization_type="MILP (PuLP / CBC)",
-            total_baseline_cost=round(total_baseline_cost, 2),
-            total_optimized_cost=round(total_optimized_cost, 2),
-            total_estimated_savings=savings,
-            savings_percentage=pct_savings,
-            total_demand_kwh=round(sum(req.predicted_demand_kw), 2),
-            total_solar_used_kwh=round(total_solar_used, 2),
-            total_grid_import_kwh=round(total_grid_import, 2),
-            total_battery_discharged_kwh=round(total_batt_discharged, 2),
-            peak_demand_baseline_kw=round(peak_baseline_kw, 2),
-            peak_demand_optimized_kw=round(peak_optimized_kw, 2),
-            peak_demand_reduction_kw=round(max(0.0, peak_baseline_kw - peak_optimized_kw), 2),
-            schedule=schedule_results
-        )
+            solver_status="OPTIMAL", solver_message="HiGHS found an optimal feasible MILP schedule.",
+            optimization_type="MILP (SciPy HiGHS)", feasible=True, objective_value=round(optimized, 6),
+            data_status=req.data_status, total_baseline_cost=round(baseline_cost, 6),
+            total_optimized_cost=round(optimized, 6), total_estimated_savings=round(savings, 6),
+            savings_percentage=round(savings / baseline_cost * 100, 3) if baseline_cost > 0 else None,
+            total_demand_kwh=round(sum(req.predicted_demand_kw) * dt, 6),
+            solar_generation_kwh=round(sum(req.solar_generation_kw) * dt, 6),
+            solar_self_consumption_kwh=round(solar_self, 6), solar_export_kwh=round(solar_out, 6),
+            solar_curtailed_kwh=round(curtail_out, 6), total_grid_import_kwh=round(grid_in, 6),
+            total_grid_export_kwh=round(grid_out, 6), total_battery_charge_kwh=round(charged, 6),
+            total_grid_emissions_kg=round(grid_in * req.carbon_emission_kg_per_kwh, 6) if req.carbon_emission_kg_per_kwh is not None else None,
+            total_battery_discharged_kwh=round(discharged, 6),
+            peak_demand_baseline_kw=round(peak_baseline, 6), peak_demand_optimized_kw=round(val(peak_idx), 6),
+            constraints_binding=sorted(binding), tariff_periods_used=period_labels,
+            explanations=explanations, limitations=limitations, schedule=schedule)

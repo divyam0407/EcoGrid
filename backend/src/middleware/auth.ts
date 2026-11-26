@@ -58,3 +58,13 @@ export const requireOrg = (req: Request, res: Response, next: NextFunction) => {
   }
   next();
 };
+
+export const requireOrganizationMembership = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user?.organizationId) return res.status(401).json({ error: 'Organization context is required.' });
+    if (req.user.role === 'SUPER_ADMIN') return next();
+    const membership = await prisma.organizationMember.findFirst({ where: { userId: req.user.id, organizationId: req.user.organizationId } });
+    if (!membership) return res.status(403).json({ error: 'Active organization membership is required.' });
+    return next();
+  } catch { return res.status(500).json({ error: 'Could not verify organization membership.' }); }
+};
