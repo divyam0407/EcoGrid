@@ -1,0 +1,15 @@
+Room,Day,Start,End,Activity,Type,Occupancy
+Room 101,Monday,09:00,11:00,Thermodynamics Lecture,Lecture,42
+Room 101,Monday,11:00,13:00,Circuit Analysis,Lecture,40
+Room 102,Monday,09:00,12:00,Fluid Mechanics,Lecture,38
+Computer Lab 1,Monday,10:00,12:00,Data Structures Practical,Lecture,32
+Computer Lab 2,Monday,14:00,17:00,Machine Learning Lab,Lecture,30
+Room 101,Tuesday,09:00,11:00,Control Systems,Lecture,35
+Room 103,Tuesday,10:00,12:00,Linear Algebra,Lecture,44
+Computer Lab 1,Tuesday,13:00,16:00,Web Technologies Lab,Lecture,34
+Room 102,Wednesday,09:00,12:00,Electromagnetic Fields,Lecture,39
+Computer Lab 3,Wednesday,10:00,13:00,Database Systems Lab,Lecture,30
+Room 104,Thursday,11:00,13:00,Engineering Ethics,Lecture,45
+Computer Lab 2,Thursday,09:00,12:00,Compiler Design Lab,Lecture,28
+Room 101,Friday,09:00,11:00,Final Term Revision,Lecture,42
+Main Auditorium Hall,Friday,14:00,18:00,Annual Tech Symposium,Lecture,650

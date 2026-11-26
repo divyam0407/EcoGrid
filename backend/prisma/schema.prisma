@@ -1,0 +1,385 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Organization {
+  id           String   @id @default(uuid())
+  name         String
+  industryType String   @default("HIGHER_EDUCATION") // HIGHER_EDUCATION, MANUFACTURING, HOSPITAL, COMMERCIAL
+  address      String?
+  timezone     String   @default("UTC")
+  currency     String   @default("USD")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  members      OrganizationMember[]
+  buildings    Building[]
+  meters       Meter[]
+  energyReadings EnergyReading[]
+  schedules    OperationalSchedule[]
+  tariffs      ElectricityTariff[]
+  solar        SolarInstallation[]
+  batteries    Battery[]
+  predictions  Prediction[]
+  anomalies    Anomaly[]
+  recommendations Recommendation[]
+  optimizations OptimizationRun[]
+  scenarios    Scenario[]
+  auditLogs    AuditLog[]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  status       String   @default("ACTIVE")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships  OrganizationMember[]
+  auditLogs    AuditLog[]
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String
+  role           String       @default("ENERGY_MANAGER") // SUPER_ADMIN, ORG_ADMIN, ENERGY_MANAGER, DEPT_MANAGER, VIEWER
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+}
+
+model Building {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  buildingType   String       @default("ACADEMIC") // ACADEMIC, LAB, LIBRARY, RESIDENTIAL, AUDITORIUM
+  address        String?
+  totalArea      Float?
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  departments    Department[]
+  rooms          Room[]
+  meters         Meter[]
+  energyReadings EnergyReading[]
+  schedules      OperationalSchedule[]
+  solar          SolarInstallation[]
+  batteries      Battery[]
+  predictions    Prediction[]
+  anomalies      Anomaly[]
+  recommendations Recommendation[]
+  optimizations  OptimizationRun[]
+}
+
+model Department {
+  id             String   @id @default(uuid())
+  organizationId String
+  buildingId     String
+  name           String
+  departmentType String   @default("ACADEMIC")
+
+  building       Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  rooms          Room[]
+}
+
+model Room {
+  id                     String   @id @default(uuid())
+  organizationId         String
+  buildingId             String
+  departmentId           String?
+  roomNumber             String
+  roomType               String   @default("CLASSROOM") // CLASSROOM, COMPUTER_LAB, RESEARCH_LAB, AUDITORIUM, OFFICE
+  capacity               Int      @default(30)
+  floor                  Int      @default(1)
+  expectedOperatingHours String   @default("08:00-18:00")
+
+  building               Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  department             Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  meters                 Meter[]
+  schedules              OperationalSchedule[]
+  occupancyRecords       OccupancyRecord[]
+  anomalies              Anomaly[]
+  energyReadings         EnergyReading[]
+}
+
+model Meter {
+  id             String       @id @default(uuid())
+  organizationId String
+  buildingId     String
+  roomId         String?
+  meterName      String
+  meterType      String       @default("MAIN_FEEDER") // MAIN_FEEDER, SUB_METER, HVAC, LIGHTING, PLUG_LOAD
+  sourceType     String       @default("MANUAL_CSV")  // MANUAL_CSV, IOT_MQTT, MODBUS
+  unit           String       @default("kWh")
+  status         String       @default("ACTIVE")
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building       Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  room           Room?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  readings       EnergyReading[]
+  anomalies      Anomaly[]
+}
+
+model EnergyReading {
+  id             String       @id @default(uuid())
+  organizationId String
+  meterId        String
+  buildingId     String
+  roomId         String?
+  timestamp      DateTime
+  consumptionKwh Float
+  powerKw        Float?
+  source         String       @default("CSV_UPLOAD")
+  qualityStatus  String       @default("VALIDATED") // VALIDATED, ESTIMATED, ANOMALOUS, FLAG_CHECK
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meter          Meter        @relation(fields: [meterId], references: [id], onDelete: Cascade)
+  building       Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  room           Room?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, timestamp])
+  @@index([buildingId, timestamp])
+  @@index([meterId, timestamp])
+}
+
+model OperationalSchedule {
+  id                String       @id @default(uuid())
+  organizationId    String
+  buildingId        String
+  roomId            String
+  activityName      String
+  activityType      String       @default("LECTURE") // LECTURE, LAB_SESSION, EXAMINATION, EVENT, MAINTENANCE
+  startDatetime     DateTime?
+  endDatetime       DateTime?
+  dayOfWeek         Int?         // 0 = Monday, 6 = Sunday
+  startTime         String       // "09:00"
+  endTime           String       // "11:00"
+  expectedOccupancy Int          @default(30)
+  sourceType        String       @default("TIMETABLE_CSV")
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building          Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  room              Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, buildingId, roomId])
+}
+
+model OccupancyRecord {
+  id             String   @id @default(uuid())
+  organizationId String
+  roomId         String
+  timestamp      DateTime
+  occupancyCount Int
+  sourceType     String   @default("ESTIMATED") // SCHEDULED, SENSOR, MANUAL, ESTIMATED
+  confidence     Float    @default(0.9)
+
+  room           Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, timestamp])
+}
+
+model ElectricityTariff {
+  id             String         @id @default(uuid())
+  organizationId String
+  tariffName     String
+  tariffType     String         @default("TIME_OF_USE") // FLAT, TIME_OF_USE, TIERED, DEMAND_PEAK
+  pricePerKwh    Float          @default(0.15)
+  effectiveFrom  DateTime       @default(now())
+  effectiveTo    DateTime?
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  periods        TariffPeriod[]
+}
+
+model TariffPeriod {
+  id          String            @id @default(uuid())
+  tariffId    String
+  periodName  String            @default("STANDARD") // OFF_PEAK, STANDARD, PEAK
+  startTime   String            // "00:00"
+  endTime     String            // "06:00"
+  pricePerKwh Float
+  dayType     String            @default("ALL") // WEEKDAY, WEEKEND, ALL
+
+  tariff      ElectricityTariff @relation(fields: [tariffId], references: [id], onDelete: Cascade)
+}
+
+model SolarInstallation {
+  id               String       @id @default(uuid())
+  organizationId   String
+  buildingId       String
+  capacityKw       Float        @default(100.0)
+  installationDate DateTime     @default(now())
+  status           String       @default("ACTIVE")
+
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building         Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  readings         SolarReading[]
+}
+
+model SolarReading {
+  id             String            @id @default(uuid())
+  organizationId String
+  installationId String
+  timestamp      DateTime
+  generationKwh  Float
+  powerKw        Float?
+
+  installation   SolarInstallation @relation(fields: [installationId], references: [id], onDelete: Cascade)
+
+  @@index([installationId, timestamp])
+}
+
+model Battery {
+  id                    String           @id @default(uuid())
+  organizationId        String
+  buildingId            String
+  name                  String           @default("Main Storage Bank")
+  capacityKwh           Float            @default(150.0)
+  maxChargeKw           Float            @default(40.0)
+  maxDischargeKw        Float            @default(40.0)
+  minSoc                Float            @default(15.0)
+  maxSoc                Float            @default(140.0)
+  initialSoc            Float            @default(30.0)
+  chargingEfficiency    Float            @default(0.92)
+  dischargingEfficiency Float            @default(0.92)
+  degradationCost       Float            @default(0.015)
+
+  organization          Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building              Building         @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  readings              BatteryReading[]
+}
+
+model BatteryReading {
+  id               String   @id @default(uuid())
+  organizationId   String
+  batteryId        String
+  timestamp        DateTime
+  stateOfCharge    Float
+  chargePowerKw    Float    @default(0)
+  dischargePowerKw Float    @default(0)
+
+  battery          Battery  @relation(fields: [batteryId], references: [id], onDelete: Cascade)
+
+  @@index([batteryId, timestamp])
+}
+
+model Prediction {
+  id                String       @id @default(uuid())
+  organizationId    String
+  buildingId        String
+  modelVersion      String       @default("v1.2-operational-aware")
+  predictionType    String       @default("24_HOUR_DEMAND")
+  forecastTimestamp DateTime
+  predictedKwh      Float
+  actualKwh         Float?
+  confidenceLower   Float?
+  confidenceUpper   Float?
+  createdAt         DateTime     @default(now())
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building          Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, forecastTimestamp])
+}
+
+model Anomaly {
+  id                String       @id @default(uuid())
+  organizationId    String
+  buildingId        String
+  meterId           String?
+  roomId            String?
+  anomalyType       String       // SPIKE, UNSCHEDULED_SURGE, HIGH_IDLE, SUDDEN_DROP
+  severity          String       // LOW, MEDIUM, HIGH, CRITICAL
+  expectedValue     Float
+  observedValue     Float
+  deviation         Float
+  deviationPercent  Float
+  description       String
+  suggestedAction   String?
+  status            String       @default("OPEN") // OPEN, INVESTIGATING, RESOLVED, FALSE_POSITIVE
+  detectedAt        DateTime     @default(now())
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building          Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  meter             Meter?       @relation(fields: [meterId], references: [id], onDelete: SetNull)
+  room              Room?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, detectedAt])
+}
+
+model Recommendation {
+  id                       String       @id @default(uuid())
+  organizationId           String
+  buildingId               String
+  recommendationType       String       // OPERATIONAL_ADJUSTMENT, PEAK_SHAVING, SOLAR_BATTERY_DISPATCH, IDLE_CUTOFF
+  title                    String
+  description              String
+  evidence                 String?
+  estimatedEnergySavingKwh Float
+  estimatedCostSaving      Float
+  priority                 String       @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  confidence               Float        @default(0.85)
+  status                   String       @default("PENDING") // PENDING, APPROVED, IMPLEMENTED, REJECTED
+  createdAt                DateTime     @default(now())
+
+  organization             Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building                 Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+}
+
+model OptimizationRun {
+  id               String       @id @default(uuid())
+  organizationId   String
+  buildingId       String
+  optimizationType String       @default("MILP_TARIFF_BATTERY")
+  baselineCost     Float
+  optimizedCost    Float
+  estimatedSavings Float
+  solverStatus     String       @default("OPTIMAL")
+  configuration    String       // JSON string
+  resultData       String       // JSON string
+  createdAt        DateTime     @default(now())
+
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building         Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+model Scenario {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  description    String?
+  configuration  String       // JSON string
+  resultData     String?      // JSON string
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String?
+  action         String
+  entityType     String
+  entityId       String?
+  timestamp      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+}

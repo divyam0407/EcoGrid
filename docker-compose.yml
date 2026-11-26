@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ecogrid-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ecogrid
+      POSTGRES_PASSWORD: ecogrid_password
+      POSTGRES_DB: ecogrid_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  intelligence:
+    build:
+      context: ./intelligence
+      dockerfile: Dockerfile
+    container_name: ecogrid-intelligence
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ecogrid-backend
+    restart: always
+    ports:
+      - "5001:5001"
+    environment:
+      - PORT=5001
+      - DATABASE_URL=postgresql://ecogrid:ecogrid_password@db:5432/ecogrid_db?schema=public
+      - PYTHON_SERVICE_URL=http://intelligence:8000
+      - JWT_SECRET=ecogrid-super-secret-jwt-key-2026
+    depends_on:
+      - db
+      - intelligence
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ecogrid-frontend
+    restart: always
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
