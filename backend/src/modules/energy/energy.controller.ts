@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../../config';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
+import { tariffRateAt } from '../recommendations/energy-intelligence.service';
 
 export const previewCsv = async (req: Request, res: Response) => {
   try {
@@ -271,21 +272,24 @@ export const getEnergySummary = async (req: Request, res: Response) => {
         },
       });
 
-    const activeTariff = await prisma.electricityTariff.findFirst({
-      where: { organizationId: orgId },
-      include: { periods: true },
-    });
-    const configuredRate = activeTariff?.pricePerKwh;
+    const firstTimestamp = readings[0]?.timestamp;
+    const lastTimestamp = readings[readings.length - 1]?.timestamp;
+    const [tariffs, organization] = await Promise.all([
+      prisma.electricityTariff.findMany({ where: { organizationId: orgId, ...(lastTimestamp ? { effectiveFrom: { lte: lastTimestamp }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: firstTimestamp } }] } : {}) }, include: { periods: true }, orderBy: { effectiveFrom: 'desc' } }),
+      prisma.organization.findUnique({ where: { id: orgId }, select: { currency: true, timezone: true } }),
+    ]);
 
     let totalKwh = 0;
     let peakDemandKw = 0;
     let totalExpenditure = 0;
 
+    let expenditureAvailable = readings.length > 0;
     readings.forEach((r) => {
       totalKwh += r.consumptionKwh;
       const kw = r.powerKw ?? (r.consumptionKwh * 60) / r.intervalMinutes;
       if (kw > peakDemandKw) peakDemandKw = kw;
-      if (configuredRate !== undefined) totalExpenditure += r.consumptionKwh * configuredRate;
+      const rate = organization ? tariffRateAt(r, tariffs, organization.timezone) : null;
+      if (rate) totalExpenditure += r.consumptionKwh * Number(rate.toString()); else expenditureAvailable = false;
     });
 
     const totalSolarKwh = solarReadings.reduce((sum, s) => sum + s.generationKwh, 0);
@@ -297,19 +301,20 @@ export const getEnergySummary = async (req: Request, res: Response) => {
 
     // Inefficiencies count
     const recommendations = await prisma.recommendation.findMany({
-      where: { organizationId: orgId, status: 'PENDING' },
+      where: { organizationId: orgId, status: { in: ['NEW', 'UNDER_REVIEW', 'APPROVED', 'IN_PROGRESS'] }, generationSource: 'A7_ENGINE', financialEstimateAvailable: true },
     });
-    const potentialSavings = recommendations.reduce((sum, r) => sum + r.estimatedCostSaving, 0);
+    const potentialSavings = recommendations.reduce((sum, r) => sum + Number(r.estimatedCostSaving || 0), 0);
 
     return res.json({
       periodDays: dayCount,
       totalConsumptionKwh: Math.round(totalKwh),
       peakDemandKw: Math.round(peakDemandKw * 10) / 10,
-      totalExpenditure: configuredRate === undefined ? null : Math.round(totalExpenditure),
+      totalExpenditure: expenditureAvailable ? Math.round(totalExpenditure) : null,
       solarGenerationKwh: Math.round(totalSolarKwh),
       gridConsumptionKwh: Math.round(Math.max(0, totalKwh - totalSolarKwh)),
       activeAnomaliesCount: activeAnomalies,
-      potentialMonthlySavings: Math.round(potentialSavings),
+      potentialSavingsCost: Math.round(potentialSavings),
+      currency: organization?.currency || null,
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });

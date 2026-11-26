@@ -12,7 +12,9 @@
     "prisma:migrate:status": "prisma migrate status",
     "prisma:migrate:legacy-sqlite": "ts-node prisma/migrate_sqlite_to_postgres.ts",
     "prisma:seed": "ts-node src/prisma/seed.ts",
-    "test:a6": "node scripts/run_a6_tests.js"
+    "test:a6": "node scripts/run_a6_tests.js",
+    "test:a7": "node scripts/run_a7_tests.js",
+    "prisma:migrate:a7-test": "node scripts/migrate_a7_test.js"
   },
   "dependencies": {
     "@prisma/client": "^5.12.0",

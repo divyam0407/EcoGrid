@@ -1,207 +1,55 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { CheckCircle2, RefreshCw, Search, ShieldCheck, XCircle, ClipboardList, Zap, DollarSign, Clock3 } from 'lucide-react';
 import api from '../../services/api';
-import {
-  Lightbulb,
-  CheckCircle2,
-  XCircle,
-  TrendingDown,
-  DollarSign,
-  ShieldCheck,
-  Sparkles,
-  ArrowRight,
-  Filter,
-} from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+
+type Recommendation = { id: string; title: string; description: string; recommendationType: string; priority: string; status: string; confidence: number; estimatedEnergySavingKwh: string | null; estimatedCostSaving: string | null; financialEstimateAvailable: boolean; calculationPeriodStart?: string; calculationPeriodEnd?: string; calculationMethod?: string; assumptions?: any; limitations?: any; priorityRationale?: any; evidence?: any; building?: { name: string }; meter?: { meterName: string }; room?: { roomNumber: string }; assignedUser?: { name: string }; generationSource: string; createdAt: string };
+const activeStatuses = ['NEW','UNDER_REVIEW','APPROVED','IN_PROGRESS'];
 
 export const Recommendations: React.FC = () => {
-  const [recommendations, setRecommendations] = useState<any[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [statusFilter, setStatusFilter] = useState<string>('');
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const { user } = useAuth(); const currency = user?.organization?.currency || '';
+  const [rows, setRows] = useState<Recommendation[]>([]); const [summary, setSummary] = useState<any>(null); const [selected, setSelected] = useState<any>(null);
+  const [status, setStatus] = useState(''); const [priority, setPriority] = useState(''); const [category, setCategory] = useState(''); const [buildingId, setBuildingId] = useState(''); const [from, setFrom] = useState(''); const [to, setTo] = useState(''); const [search, setSearch] = useState(''); const [page, setPage] = useState(1); const [pagination, setPagination] = useState<any>({page:1,pages:1,total:0}); const [loading, setLoading] = useState(true); const [refreshing, setRefreshing] = useState(false); const [error, setError] = useState(''); const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => { setLoading(true); setError(''); try { const params = new URLSearchParams(); if (status) params.set('status', status); if (priority) params.set('priority', priority); if (category) params.set('category', category); if (buildingId) params.set('buildingId', buildingId); if (from) params.set('from', from); if (to) params.set('to', to); if (search) params.set('search', search); params.set('page',String(page)); params.set('pageSize','20'); params.set('source','A7_ENGINE'); const [list, totals] = await Promise.all([api.get(`/recommendations?${params.toString()}`), api.get('/recommendations/summary')]); setRows(list.data.recommendations || []); setPagination(list.data.pagination || {page:1,pages:1,total:0}); setSummary(totals.data); } catch (e: any) { setError(e.response?.data?.error || 'Recommendations could not be loaded.'); } finally { setLoading(false); } }, [status, priority, category, buildingId, from, to, search, page]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setPage(1); }, [status, priority, category, buildingId, from, to, search]);
+  const detail = async (id: string) => { try { const r = await api.get(`/recommendations/${id}`); setSelected(r.data.recommendation); } catch (e: any) { setError(e.response?.data?.error || 'Details could not be loaded.'); } };
+  const refresh = async () => { setRefreshing(true); setError(''); try { await api.post('/recommendations/refresh', {}); await load(); } catch (e: any) { setError(e.response?.data?.error || 'Analysis refresh failed.'); } finally { setRefreshing(false); } };
+  const statusUpdate = async (r: Recommendation, next: string) => { const reason = ['REJECTED','DISMISSED'].includes(next) ? window.prompt(`Reason for ${next.toLowerCase()}:`) : undefined; if (['REJECTED','DISMISSED'].includes(next) && !reason?.trim()) return; let approvedSavingsTargetKwh: number | undefined; if (next === 'APPROVED') { const target = window.prompt('Approved savings target in kWh (leave blank if no target is set):', r.estimatedEnergySavingKwh || ''); if (target === null) return; if (target.trim()) { approvedSavingsTargetKwh = Number(target); if (!Number.isFinite(approvedSavingsTargetKwh) || approvedSavingsTargetKwh < 0) { setError('Approved savings target must be a non-negative kWh value.'); return; } } } setBusy(true); try { await api.put(`/recommendations/${r.id}/status`, { status: next, ...(reason ? { reason } : {}), ...(approvedSavingsTargetKwh !== undefined ? { approvedSavingsTargetKwh } : {}) }); await load(); if (selected?.id === r.id) await detail(r.id); } catch (e: any) { setError(e.response?.data?.error || 'Status update failed.'); } finally { setBusy(false); } };
+  const addNote = async () => { if (!selected || !note.trim()) return; setBusy(true); try { await api.post(`/recommendations/${selected.id}/notes`, { note }); setNote(''); await detail(selected.id); } catch (e: any) { setError(e.response?.data?.error || 'Note could not be saved.'); } finally { setBusy(false); } };
+  const money = (amount: string | null) => amount === null ? 'Unavailable' : `${currency} ${Number(amount).toLocaleString(undefined,{maximumFractionDigits:2})}`;
+  const active = summary?.totals?.activeOpportunities ?? 0; const potentialEnergy = Number(summary?.totals?.potentialEnergyKwh || 0); const pricedCount = summary?.totals?.pricedRecommendationCount || 0;
 
-  useEffect(() => {
-    fetchRecommendations();
-  }, [statusFilter]);
-
-  const fetchRecommendations = async () => {
-    setLoading(true);
-    try {
-      const q = statusFilter ? `?status=${statusFilter}` : '';
-      const res = await api.get(`/recommendations${q}`);
-      setRecommendations(res.data.recommendations || []);
-    } catch (err) {
-      console.error('Failed to load recommendations:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUpdateStatus = async (id: string, newStatus: string) => {
-    setUpdatingId(id);
-    try {
-      await api.put(`/recommendations/${id}/status`, { status: newStatus });
-      setRecommendations((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, status: newStatus } : r))
-      );
-    } catch (err) {
-      console.error('Failed to update recommendation status:', err);
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
-  const totalMonthlySavings = recommendations
-    .filter((r) => r.status !== 'REJECTED')
-    .reduce((sum, r) => sum + r.estimatedCostSaving, 0);
-
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">AI & Operational Recommendations</h1>
-          <p className="text-xs text-slate-400">
-            Actionable energy interventions translated directly from operational timetables, telemetry & solvers
-          </p>
-        </div>
-
-        <div className="flex items-center space-x-3">
-          <div className="bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-1.5 rounded-lg flex items-center space-x-2">
-            <DollarSign className="w-4 h-4 text-emerald-400" />
-            <span className="text-xs text-slate-300">Total Potential Savings:</span>
-            <span className="text-sm font-bold text-emerald-400 font-mono">
-              ${totalMonthlySavings.toLocaleString()}/mo
-            </span>
-          </div>
-        </div>
+  return <div className="space-y-6">
+    <header className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-xl font-bold tracking-tight text-white">Energy Intelligence & Recommendations</h1><p className="mt-1 text-xs text-slate-400">Evidence-backed opportunities from organization meter, tariff and operating data.</p></div><button onClick={refresh} disabled={refreshing} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? 'Analyzing…' : 'Refresh analysis'}</button></header>
+    {error && <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">{error}</div>}
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <Metric icon={<ClipboardList />} label="Active opportunities" value={String(active)} detail="New, reviewing, approved or in progress" />
+      <Metric icon={<Zap />} label="Potential energy" value={`${potentialEnergy.toLocaleString(undefined,{maximumFractionDigits:1})} kWh`} detail="Observed-window estimates; no extrapolation" />
+      <Metric icon={<DollarSign />} label="Priced opportunities" value={String(pricedCount)} detail={pricedCount ? `${money(summary?.totals?.potentialCost)} potential total` : 'No applicable tariff estimate'} />
+      <Metric icon={<Clock3 />} label="Awaiting review" value={String((summary?.byStatus?.NEW || 0) + (summary?.byStatus?.UNDER_REVIEW || 0))} detail="Requires facilities review" />
+    </section>
+    <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+      <div className="flex flex-wrap items-center gap-3"><div className="relative min-w-[220px] flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500"/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search recommendations" className="w-full rounded-lg border border-slate-700 bg-slate-800 py-2 pl-9 pr-3 text-xs text-white outline-none focus:border-emerald-500"/></div>
+        <select value={status} onChange={e=>setStatus(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200"><option value="">All statuses</option>{['NEW','UNDER_REVIEW','APPROVED','REJECTED','IN_PROGRESS','COMPLETED','DISMISSED'].map(x=><option key={x}>{x}</option>)}</select>
+        <select value={priority} onChange={e=>setPriority(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200"><option value="">All priorities</option>{['CRITICAL','HIGH','MEDIUM','LOW'].map(x=><option key={x}>{x}</option>)}</select>
+        <select value={buildingId} onChange={e=>setBuildingId(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200"><option value="">All buildings</option>{(summary?.byBuilding||[]).map((b:any)=><option key={b.buildingId} value={b.buildingId}>{b.buildingName}</option>)}</select>
+        <select value={category} onChange={e=>setCategory(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200"><option value="">All categories</option>{['IDLE_CUTOFF','OPERATIONAL_ADJUSTMENT'].map(x=><option key={x}>{x}</option>)}</select>
+        <label className="text-[9px] text-slate-500">From <input type="date" value={from} onChange={e=>setFrom(e.target.value)} className="rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-slate-200"/></label><label className="text-[9px] text-slate-500">To <input type="date" value={to} onChange={e=>setTo(e.target.value)} className="rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-slate-200"/></label>
       </div>
-
-      {/* Filter Row */}
-      <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <Filter className="w-4 h-4 text-slate-400" />
-          <span className="text-xs font-semibold text-slate-300">Status:</span>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200"
-          >
-            <option value="">All Recommendations</option>
-            <option value="PENDING">Pending Approval</option>
-            <option value="APPROVED">Approved</option>
-            <option value="IMPLEMENTED">Implemented</option>
-            <option value="REJECTED">Rejected</option>
-          </select>
-        </div>
-
-        <div className="text-xs text-slate-400 font-mono">
-          {recommendations.length} Actionable Items
-        </div>
-      </div>
-
-      {/* Recommendations Cards */}
-      <div className="space-y-4">
-        {recommendations.map((r) => (
-          <div
-            key={r.id}
-            className="bg-slate-900 border border-slate-800 hover:border-slate-700 p-5 rounded-xl transition-all"
-          >
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-              <div className="flex items-center space-x-2.5">
-                <span
-                  className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
-                    r.priority === 'CRITICAL'
-                      ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
-                      : r.priority === 'HIGH'
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
-                      : 'bg-blue-500/20 text-blue-300 border-blue-500/30'
-                  }`}
-                >
-                  {r.priority} Priority
-                </span>
-
-                <span
-                  className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                    r.status === 'APPROVED'
-                      ? 'bg-emerald-500/20 text-emerald-300'
-                      : r.status === 'IMPLEMENTED'
-                      ? 'bg-purple-500/20 text-purple-300'
-                      : r.status === 'REJECTED'
-                      ? 'bg-slate-800 text-slate-500'
-                      : 'bg-slate-800 text-slate-300'
-                  }`}
-                >
-                  {r.status}
-                </span>
-
-                <h3 className="text-sm font-bold text-white">{r.title}</h3>
-              </div>
-
-              <div className="flex items-center space-x-4 text-xs font-mono">
-                <div className="text-right">
-                  <span className="text-slate-400 block text-[10px] uppercase font-sans">Estimated Savings</span>
-                  <span className="text-emerald-400 font-bold text-sm">
-                    ${r.estimatedCostSaving.toFixed(2)}/mo
-                  </span>
-                  <span className="text-slate-400 text-[10px] block">
-                    ({r.estimatedEnergySavingKwh?.toLocaleString()} kWh)
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-300 mb-3">{r.description}</p>
-
-            {/* Evidence block */}
-            <div className="bg-slate-850 p-3 rounded-lg border border-slate-800 text-xs mb-3">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">
-                Supporting Telemetry Evidence & Rationale:
-              </span>
-              <p className="text-slate-300 font-mono text-[11px]">{r.evidence}</p>
-            </div>
-
-            {/* Human-in-the-loop Approval actions (PRD Section 16 Rule 19) */}
-            <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
-              <span className="text-[11px] text-slate-400 flex items-center space-x-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Confidence Score: {(r.confidence * 100).toFixed(0)}% (Verified by operational correlation)</span>
-              </span>
-
-              <div className="flex items-center space-x-2">
-                {r.status === 'PENDING' && (
-                  <>
-                    <button
-                      onClick={() => handleUpdateStatus(r.id, 'APPROVED')}
-                      disabled={updatingId === r.id}
-                      className="flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Approve Measure</span>
-                    </button>
-                    <button
-                      onClick={() => handleUpdateStatus(r.id, 'REJECTED')}
-                      disabled={updatingId === r.id}
-                      className="flex items-center space-x-1 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-rose-400 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                      <XCircle className="w-3.5 h-3.5" />
-                      <span>Reject</span>
-                    </button>
-                  </>
-                )}
-
-                {r.status === 'APPROVED' && (
-                  <button
-                    onClick={() => handleUpdateStatus(r.id, 'IMPLEMENTED')}
-                    disabled={updatingId === r.id}
-                    className="flex items-center space-x-1 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    <span>Mark Implemented</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+      {pagination.pages > 1 && <div className="flex items-center justify-between border-t border-slate-800 pt-3 text-[10px] text-slate-400"><span>{pagination.total} recommendations · page {pagination.page} of {pagination.pages}</span><div className="flex gap-2"><button disabled={page <= 1} onClick={()=>setPage(p=>p-1)} className="rounded bg-slate-800 px-3 py-1 disabled:opacity-40">Previous</button><button disabled={page >= pagination.pages} onClick={()=>setPage(p=>p+1)} className="rounded bg-slate-800 px-3 py-1 disabled:opacity-40">Next</button></div></div>}
+    </section>
+    {summary?.byBuilding?.length > 0 && <section className="rounded-xl border border-slate-800 bg-slate-900 p-4"><h2 className="mb-4 text-sm font-semibold text-white">Opportunities by building</h2><div className="space-y-3">{summary.byBuilding.map((b:any)=>{const width=Math.max(3,Math.min(100, Number(b.potentialEnergyKwh)/Math.max(1,potentialEnergy)*100)); return <div key={b.buildingId} className="grid grid-cols-[minmax(90px,1fr)_3fr_auto] items-center gap-3 text-xs"><span className="truncate text-slate-300">{b.buildingName}</span><div className="h-2 rounded-full bg-slate-800"><div className="h-2 rounded-full bg-emerald-500" style={{width:`${width}%`}}/></div><span className="font-mono text-slate-400">{Number(b.potentialEnergyKwh).toLocaleString(undefined,{maximumFractionDigits:1})} kWh</span></div>})}</div></section>}
+    {summary?.trend?.length > 0 && <section className="rounded-xl border border-slate-800 bg-slate-900 p-4"><h2 className="text-sm font-semibold text-white">Recommendation creation history</h2><p className="mb-4 mt-1 text-[10px] text-slate-500">Count of persisted A7 recommendation records by creation month. Refreshes update records without adding monthly copies.</p><div className="flex h-24 items-end gap-2">{summary.trend.slice(-12).map((item:any)=><div key={item.month} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1"><span className="text-[9px] text-slate-400">{item.count}</span><div className="w-full rounded-t bg-sky-500/70" style={{height:`${Math.max(4,Number(item.count)/Math.max(1,...summary.trend.map((x:any)=>Number(x.count)))*68)}px`}}/><span className="text-[8px] text-slate-500">{item.month.slice(2)}</span></div>)}</div></section>}
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,.75fr)]"><section className="space-y-3">
+      {loading ? <div className="rounded-xl border border-slate-800 bg-slate-900 p-8 text-center text-sm text-slate-400">Loading recommendations…</div> : rows.length === 0 ? <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/60 p-8 text-center"><Zap className="mx-auto mb-3 h-7 w-7 text-slate-500"/><h2 className="text-sm font-semibold text-white">No evidence-backed opportunities yet</h2><p className="mx-auto mt-2 max-w-lg text-xs leading-5 text-slate-400">Add valid meter readings and operating schedules, then refresh analysis. Financial estimates require a configured tariff. Refreshing does not invent missing occupancy or schedules.</p></div> : rows.map(r=><article key={r.id} className={`rounded-xl border bg-slate-900 p-4 ${selected?.id===r.id?'border-emerald-500/50':'border-slate-800'}`}><div className="flex flex-wrap items-start justify-between gap-3"><button className="min-w-0 text-left" onClick={()=>void detail(r.id)}><div className="mb-2 flex flex-wrap items-center gap-2"><Badge tone={r.priority}>{r.priority}</Badge><Badge tone={r.status}>{r.status.replace(/_/g,' ')}</Badge><span className="text-[10px] text-slate-500">{r.generationSource==='A7_ENGINE'?'Evidence engine':'Legacy unverified'}</span></div><h3 className="text-sm font-semibold text-white">{r.title}</h3><p className="mt-1 text-xs text-slate-400">{r.building?.name}{r.room?.roomNumber?` · Room ${r.room.roomNumber}`:''}{r.meter?.meterName?` · ${r.meter.meterName}`:''}</p><p className="mt-1 text-[9px] text-slate-500">Source class: {(r.evidence?.dataSources||[]).map((s:string)=>s==='SYNTHETIC_DEMO'?'Demo':s==='BENCHMARK'?'Benchmark':'Operational').join(', ')||'unavailable'}</p></button><div className="text-right text-xs"><strong className="block text-emerald-300">{r.estimatedEnergySavingKwh ? `${Number(r.estimatedEnergySavingKwh).toLocaleString()} kWh` : 'Not quantified'}</strong><span className="text-slate-400">{r.financialEstimateAvailable?money(r.estimatedCostSaving):'Tariff estimate unavailable'}</span><span className="mt-1 block text-[10px] text-slate-500">Potential · observed window</span></div></div><p className="mt-3 text-xs leading-5 text-slate-300">{r.description}</p><div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-3"><span className="flex items-center gap-1.5 text-[10px] text-slate-400"><ShieldCheck className="h-3.5 w-3.5 text-sky-400"/> Evidence strength: {r.confidence>=.75?'higher':r.confidence>=.5?'moderate':'limited'} · {Math.round(r.confidence*100)}% rubric</span><div className="flex gap-2">{r.status==='NEW'&&<><button disabled={busy} onClick={()=>void statusUpdate(r,'APPROVED')} className="rounded-md bg-emerald-700 px-2.5 py-1.5 text-[10px] text-white"><CheckCircle2 className="mr-1 inline h-3 w-3"/>Approve</button><button disabled={busy} onClick={()=>void statusUpdate(r,'REJECTED')} className="rounded-md bg-slate-800 px-2.5 py-1.5 text-[10px] text-slate-300"><XCircle className="mr-1 inline h-3 w-3"/>Reject</button></>}{r.status==='APPROVED'&&<button disabled={busy} onClick={()=>void statusUpdate(r,'IN_PROGRESS')} className="rounded-md bg-indigo-700 px-2.5 py-1.5 text-[10px] text-white">Start action</button>}{r.status==='IN_PROGRESS'&&<button disabled={busy} onClick={()=>void detail(r.id)} className="rounded-md bg-indigo-700 px-2.5 py-1.5 text-[10px] text-white">Record completion…</button>}</div></div></article>)}
+    </section>
+    <aside className="h-fit rounded-xl border border-slate-800 bg-slate-900 p-4"><h2 className="text-sm font-semibold text-white">Recommendation evidence</h2>{!selected?<p className="mt-3 text-xs text-slate-400">Select an opportunity to inspect its evidence, calculation, limitations and history.</p>:<div className="mt-4 space-y-4 text-xs"><div><h3 className="font-semibold text-slate-200">{selected.title}</h3><p className="mt-1 text-slate-400">{selected.description}</p></div><section><h4 className="font-semibold text-slate-300">Calculation</h4><p className="mt-1 text-slate-400">{selected.calculationMethod||'No quantified baseline calculation was available.'}</p>{selected.calculationPeriodStart&&<p className="mt-1 text-slate-500">Evidence window: {new Date(selected.calculationPeriodStart).toLocaleDateString()} – {new Date(selected.calculationPeriodEnd).toLocaleDateString()}</p>}<p className="mt-1 text-slate-400">Potential energy: {selected.estimatedEnergySavingKwh?`${selected.estimatedEnergySavingKwh} kWh`:'Unavailable'} · Approved target: {selected.approvedSavingsTargetKwh?`${selected.approvedSavingsTargetKwh} kWh`:'Not set'} · Cost: {selected.financialEstimateAvailable?money(selected.estimatedCostSaving):'Unavailable'}</p></section><section><h4 className="font-semibold text-slate-300">Supporting evidence</h4><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-slate-950 p-2 text-[10px] text-slate-400">{JSON.stringify(selected.evidence,null,2)||'No evidence payload available'}</pre></section><List title="Assumptions" items={selected.assumptions}/><List title="Limitations" items={selected.limitations}/><RecommendationControls recommendation={selected} onUpdated={()=>void detail(selected.id)}/><section><h4 className="font-semibold text-slate-300">History</h4><div className="mt-2 max-h-36 space-y-2 overflow-auto">{(selected.events||[]).map((event:any)=><div key={event.id} className="border-l border-slate-700 pl-2 text-[10px]"><span className="text-slate-300">{event.eventType.replace(/_/g,' ')}</span><span className="ml-2 text-slate-500">{new Date(event.createdAt).toLocaleString()}</span>{event.note&&<p className="mt-1 text-slate-400">{event.note}</p>}</div>)}</div><div className="mt-2 flex gap-2"><input value={note} onChange={e=>setNote(e.target.value)} placeholder="Add an operational note" className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs text-white"/><button disabled={busy||!note.trim()} onClick={()=>void addNote()} className="rounded bg-slate-700 px-3 text-xs text-white">Add</button></div></section>{['APPROVED','IN_PROGRESS','COMPLETED'].includes(selected.status)&&(selected.implementedAt?<Measurement id={selected.id} measurements={selected.measurements||[]} onSaved={()=>void detail(selected.id)}/>:<p className="border-t border-slate-800 pt-3 text-[10px] text-slate-500">Record an implementation date before comparing post-action measurements.</p>)}</div>}</aside></div>
+  </div>;
 };
+
+function Metric({icon,label,value,detail}:{icon:React.ReactNode;label:string;value:string;detail:string}) { return <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="flex items-center gap-2 text-slate-400">{React.cloneElement(icon as React.ReactElement,{className:'h-4 w-4 text-emerald-400'})}<span className="text-[10px] uppercase tracking-wide">{label}</span></div><div className="mt-2 text-lg font-semibold text-white">{value}</div><p className="mt-1 text-[10px] text-slate-500">{detail}</p></div>; }
+function Badge({tone,children}:{tone:string;children:React.ReactNode}) { const styles=tone==='CRITICAL'?'border-rose-500/30 bg-rose-500/10 text-rose-300':tone==='HIGH'?'border-amber-500/30 bg-amber-500/10 text-amber-300':tone==='APPROVED'||tone==='COMPLETED'?'border-emerald-500/30 bg-emerald-500/10 text-emerald-300':'border-slate-700 bg-slate-800 text-slate-300'; return <span className={`rounded border px-2 py-0.5 text-[9px] font-bold uppercase ${styles}`}>{children}</span>; }
+function List({title,items}:{title:string;items:any}) { const list=Array.isArray(items)?items:items&&typeof items==='object'?Object.entries(items).map(([k,v])=>`${k}: ${v}`):[]; return <section><h4 className="font-semibold text-slate-300">{title}</h4>{list.length?<ul className="mt-1 list-disc space-y-1 pl-4 text-slate-400">{list.map((x:any,i)=><li key={i}>{typeof x==='string'?x:JSON.stringify(x)}</li>)}</ul>:<p className="mt-1 text-slate-500">None recorded.</p>}</section>; }
+function RecommendationControls({recommendation,onUpdated}:{recommendation:any;onUpdated:()=>void}) { const [assignee,setAssignee]=useState(recommendation.assignedUserId||''); const [members,setMembers]=useState<any[]>([]); const [details,setDetails]=useState(''); const [implementationDate,setImplementationDate]=useState(recommendation.implementedAt?new Date(recommendation.implementedAt).toISOString().slice(0,10):''); const [message,setMessage]=useState(''); useEffect(()=>{api.get('/recommendations/assignees').then(r=>setMembers(r.data.members||[])).catch(()=>setMembers([]));},[]); useEffect(()=>{setAssignee(recommendation.assignedUserId||'');setImplementationDate(recommendation.implementedAt?new Date(recommendation.implementedAt).toISOString().slice(0,10):'');},[recommendation.id,recommendation.assignedUserId,recommendation.implementedAt]); const assign=async()=>{try{await api.patch(`/recommendations/${recommendation.id}/assignment`,{assignedUserId:assignee||null});setMessage('Assignment saved.');onUpdated();}catch(e:any){setMessage(e.response?.data?.error||'Assignment failed.');}}; const markImplemented=async()=>{if(!implementationDate)return;try{await api.patch(`/recommendations/${recommendation.id}/implementation`,{implementedAt:new Date(`${implementationDate}T00:00:00`).toISOString()});setMessage('Implementation date recorded.');onUpdated();}catch(e:any){setMessage(e.response?.data?.error||'Implementation date failed.');}}; const complete=async()=>{if(!details.trim())return;try{await api.patch(`/recommendations/${recommendation.id}/completion`,{completionDetails:details.trim()});setMessage('Completion recorded.');setDetails('');onUpdated();}catch(e:any){setMessage(e.response?.data?.error||'Completion update failed.');}}; return <section className="border-t border-slate-800 pt-3"><h4 className="font-semibold text-slate-300">Ownership & action</h4><p className="mt-1 text-[10px] text-slate-500">{recommendation.assignedUser?`Assigned to ${recommendation.assignedUser.name}`:'Not assigned'}{recommendation.approvedAt?` · Approved ${new Date(recommendation.approvedAt).toLocaleDateString()}`:''}</p><div className="mt-2 flex gap-2"><select value={assignee} onChange={e=>setAssignee(e.target.value)} className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-[10px] text-white"><option value="">Unassigned</option>{members.map(m=><option key={m.id} value={m.id}>{m.name} · {m.role}</option>)}</select><button onClick={()=>void assign()} className="rounded bg-slate-700 px-2 text-[10px] text-white">Save</button></div>{['APPROVED','IN_PROGRESS'].includes(recommendation.status)&&<div className="mt-2 flex gap-2"><input type="date" value={implementationDate} onChange={e=>setImplementationDate(e.target.value)} className="rounded bg-slate-800 px-2 py-1 text-[10px] text-white"/><button onClick={()=>void markImplemented()} disabled={!implementationDate} className="rounded bg-indigo-700 px-2 py-1 text-[10px] text-white">Set implementation date</button></div>}{recommendation.status==='IN_PROGRESS'&&<><textarea value={details} onChange={e=>setDetails(e.target.value)} placeholder="Describe completed work and operating changes." className="mt-2 w-full rounded border border-slate-700 bg-slate-800 p-2 text-[10px] text-white"/><button onClick={()=>void complete()} disabled={!details.trim()} className="mt-1 rounded bg-indigo-700 px-3 py-1.5 text-[10px] text-white disabled:opacity-50">Record completion</button></>}{message&&<p className="mt-1 text-[10px] text-slate-400">{message}</p>}</section>; }
+function Measurement({id,measurements,onSaved}:{id:string;measurements:any[];onSaved:()=>void}) { const [start,setStart]=useState(''); const [end,setEnd]=useState(''); const [result,setResult]=useState<any>(null); const [busy,setBusy]=useState(false); const submit=async()=>{setBusy(true);try{const r=await api.post(`/recommendations/${id}/measurements`,{comparisonPeriodStart:new Date(start).toISOString(),comparisonPeriodEnd:new Date(end).toISOString()});setResult(r.data.measurement);onSaved();}catch(e:any){setResult({error:e.response?.data?.error||'Measurement unavailable'});}finally{setBusy(false);}}; return <section className="border-t border-slate-800 pt-3"><h4 className="font-semibold text-slate-300">Savings tracking</h4><p className="mt-1 text-[10px] text-slate-500">Enter the post-action window. Baseline uses the preceding equally sized period; estimates are never marked verified.</p><div className="mt-2 grid grid-cols-2 gap-2"><label className="text-[10px] text-slate-400">From<input type="date" value={start} onChange={e=>setStart(e.target.value)} className="mt-1 w-full rounded bg-slate-800 p-1.5 text-white"/></label><label className="text-[10px] text-slate-400">To<input type="date" value={end} onChange={e=>setEnd(e.target.value)} className="mt-1 w-full rounded bg-slate-800 p-1.5 text-white"/></label></div><button onClick={submit} disabled={busy||!start||!end} className="mt-2 rounded bg-slate-700 px-3 py-1.5 text-[10px] text-white disabled:opacity-50">{busy?'Comparing…':'Compare periods'}</button>{result&&<p className="mt-2 text-[10px] text-amber-300">{result.error||`${result.savingsStatus.replace(/_/g,' ')} · estimated ${result.estimatedRealizedSavingsKwh||'n/a'} kWh. Not verified.`}</p>}{measurements.length>0&&<div className="mt-3 space-y-2">{measurements.map(m=><div key={m.id} className="rounded bg-slate-950 p-2 text-[10px] text-slate-400"><div className="font-semibold text-amber-300">{m.savingsStatus.replace(/_/g,' ')} · estimate {m.estimatedRealizedSavingsKwh||'not available'} kWh (unverified)</div><p>{new Date(m.comparisonPeriodStart).toLocaleDateString()}–{new Date(m.comparisonPeriodEnd).toLocaleDateString()} · observed {m.postActionMeasuredKwh||'n/a'} kWh</p><p>{m.methodology}</p></div>)}</div>}</section>; }

@@ -1,0 +1,4 @@
+ALTER TABLE "Recommendation" ALTER COLUMN "status" SET DEFAULT 'NEW';
+ALTER INDEX "Recommendation_meterId_calculationPeriodStart_calculationPeriod" RENAME TO "Recommendation_meterId_calculationPeriodStart_calculationPe_idx";
+ALTER INDEX "RecommendationEvent_organizationId_recommendationId_createdAt_i" RENAME TO "RecommendationEvent_organizationId_recommendationId_created_idx";
+ALTER INDEX "RecommendationMeasurement_organizationId_recommendationId_measu" RENAME TO "RecommendationMeasurement_organizationId_recommendationId_m_idx";

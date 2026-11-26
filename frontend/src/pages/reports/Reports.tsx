@@ -44,8 +44,8 @@ export const Reports: React.FC = () => {
       `Total Consumption kWh,${report.metrics?.totalEnergyConsumedKwh}\n` +
       `Solar Generation kWh,${report.metrics?.solarEnergyGeneratedKwh}\n` +
       `Grid Purchases kWh,${report.metrics?.gridElectricityPurchasedKwh}\n` +
-      `Electricity Expenditure $,${report.metrics?.totalElectricityExpenditure}\n` +
-      `Potential Cost Savings $,${report.metrics?.potentialCostSavingsIdentified}\n` +
+      `Electricity Expenditure ${report.metrics?.currency || 'currency'},${report.metrics?.totalElectricityExpenditure ?? 'Unavailable'}\n` +
+      `Potential Cost Savings ${report.metrics?.currency || 'currency'},${report.metrics?.potentialCostSavingsIdentified ?? 0}\n` +
       `Grid Emissions kg CO2e,${report.metrics?.carbonEmissions?.estimatedGridEmissionsKgCo2e}\n` +
       `Emissions Metric Tons,${report.metrics?.carbonEmissions?.estimatedGridEmissionsMetricTons}\n`;
 
@@ -141,7 +141,7 @@ export const Reports: React.FC = () => {
           <div className="bg-slate-850 p-4 rounded-xl border border-slate-800">
             <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Total Expenditure</span>
             <span className="text-xl font-bold text-white font-mono">
-              ${report?.metrics?.totalElectricityExpenditure?.toLocaleString()}
+              {report?.metrics?.totalElectricityExpenditure == null ? 'Unavailable' : `${report?.metrics?.currency || ''} ${report.metrics.totalElectricityExpenditure.toLocaleString()}`}
             </span>
           </div>
         </div>

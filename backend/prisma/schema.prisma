@@ -35,6 +35,8 @@ model Organization {
   optimizations   OptimizationRun[]
   scenarios       Scenario[]
   auditLogs       AuditLog[]
+  recommendationEvents RecommendationEvent[]
+  recommendationMeasurements RecommendationMeasurement[]
   importBatches   DataImportBatch[]
   benchmarkRuns   BenchmarkEvaluationRun[]
 }
@@ -50,6 +52,10 @@ model User {
 
   memberships OrganizationMember[]
   auditLogs   AuditLog[]
+  assignedRecommendations Recommendation[] @relation("RecommendationAssignee")
+  approvedRecommendations Recommendation[] @relation("RecommendationApprover")
+  recommendationEvents RecommendationEvent[]
+  recommendationMeasurements RecommendationMeasurement[]
 }
 
 model OrganizationMember {
@@ -127,6 +133,7 @@ model Room {
   schedules        OperationalSchedule[]
   calendarEvents   AcademicCalendarEvent[]
   operationalInsights OperationalInsight[]
+  recommendations Recommendation[]
   occupancyRecords OccupancyRecord[]
   anomalies        Anomaly[]
   energyReadings   EnergyReading[]
@@ -152,6 +159,8 @@ model Meter {
   room         Room?           @relation(fields: [roomId], references: [id], onDelete: SetNull)
   readings     EnergyReading[]
   anomalies    Anomaly[]
+  recommendations Recommendation[]
+  recommendationMeasurements RecommendationMeasurement[]
 }
 
 model EnergyReading {
@@ -285,16 +294,20 @@ model OperationalInsight {
   status            String   @default("NEW") // NEW, REVIEWED, DISMISSED, ACTIONED
   approvalStatus    String   @default("NOT_REQUESTED")
   outcomeJson       String?
+  sourceKey         String?
+  generatorVersion  String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   building     Building? @relation(fields: [buildingId], references: [id], onDelete: SetNull)
   room         Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  recommendations Recommendation[]
 
   @@index([organizationId, status, createdAt])
   @@index([buildingId, periodStart])
   @@index([roomId, periodStart])
+  @@unique([organizationId, sourceKey])
 }
 
 model OccupancyRecord {
@@ -458,21 +471,100 @@ model Recommendation {
   id                       String   @id @default(uuid())
   organizationId           String
   buildingId               String
+  roomId                   String?
+  meterId                  String?
+  operationalInsightId     String?
+  sourceKey                String?
   recommendationType       String // OPERATIONAL_ADJUSTMENT, PEAK_SHAVING, SOLAR_BATTERY_DISPATCH, IDLE_CUTOFF
+  generationSource         String   @default("LEGACY_UNVERIFIED")
   title                    String
   description              String
   evidence                 String?
-  estimatedEnergySavingKwh Float
-  estimatedCostSaving      Float
+  estimatedEnergySavingKwh Decimal? @db.Decimal(18, 6)
+  estimatedCostSaving      Decimal? @db.Decimal(18, 4)
+  approvedSavingsTargetKwh Decimal? @db.Decimal(18, 6)
+  financialEstimateAvailable Boolean @default(false)
+  savingsPeriod            String?
+  calculationPeriodStart   DateTime?
+  calculationPeriodEnd     DateTime?
+  calculationMethod        String?
+  assumptionsJson          String?
+  limitationsJson          String?
   priority                 String   @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  priorityReason           String?
+  effortLevel              String?
   confidence               Float    @default(0.85)
-  status                   String   @default("PENDING") // PENDING, APPROVED, IMPLEMENTED, REJECTED
+  status                   String   @default("NEW") // NEW, UNDER_REVIEW, APPROVED, REJECTED, IN_PROGRESS, COMPLETED, DISMISSED; legacy statuses are preserved
+  assignedUserId           String?
+  approvedByUserId         String?
+  approvedAt               DateTime?
+  rejectedReason           String?
+  implementedAt            DateTime?
+  completionDetails        String?
   createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   building     Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  room         Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  meter        Meter? @relation(fields: [meterId], references: [id], onDelete: SetNull)
+  operationalInsight OperationalInsight? @relation(fields: [operationalInsightId], references: [id], onDelete: SetNull)
+  assignedUser User? @relation("RecommendationAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  approvedByUser User? @relation("RecommendationApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  events RecommendationEvent[]
+  measurements RecommendationMeasurement[]
 
   @@index([organizationId, status])
+  @@index([organizationId, generationSource, createdAt])
+  @@index([organizationId, buildingId, priority, status])
+  @@index([meterId, calculationPeriodStart, calculationPeriodEnd])
+  @@unique([organizationId, sourceKey])
+}
+
+model RecommendationEvent {
+  id                String   @id @default(uuid())
+  organizationId    String
+  recommendationId  String
+  actorUserId       String?
+  eventType         String
+  fromStatus        String?
+  toStatus          String?
+  reason            String?
+  note              String?
+  metadataJson      String?
+  createdAt         DateTime @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recommendation Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  actor          User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, recommendationId, createdAt])
+}
+
+model RecommendationMeasurement {
+  id                         String   @id @default(uuid())
+  organizationId             String
+  recommendationId           String
+  meterId                    String
+  baselinePeriodStart        DateTime
+  baselinePeriodEnd          DateTime
+  comparisonPeriodStart      DateTime
+  comparisonPeriodEnd        DateTime
+  baselineExpectedKwh        Decimal? @db.Decimal(18, 6)
+  postActionMeasuredKwh      Decimal? @db.Decimal(18, 6)
+  estimatedRealizedSavingsKwh Decimal? @db.Decimal(18, 6)
+  savingsStatus              String   @default("INSUFFICIENT_DATA") // INSUFFICIENT_DATA, ESTIMATED_UNVERIFIED, REVIEW_REQUIRED, OVERLAPPING_RECOMMENDATIONS
+  methodology                String
+  limitationsJson            String
+  measuredAt                 DateTime @default(now())
+  createdByUserId            String?
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  recommendation Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  meter          Meter @relation(fields: [meterId], references: [id], onDelete: Cascade)
+  createdBy      User? @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, recommendationId, measuredAt])
 }
 
 model OptimizationRun {

@@ -29,7 +29,7 @@ export const queryEnergyAssistant = async (req: Request, res: Response) => {
     });
 
     const recommendations = await prisma.recommendation.findMany({
-      where: { organizationId: orgId, status: 'PENDING' },
+      where: { organizationId: orgId, generationSource: 'A7_ENGINE', financialEstimateAvailable: true, status: { in: ['NEW','UNDER_REVIEW','APPROVED','IN_PROGRESS'] } },
       take: 5,
     });
 
@@ -44,22 +44,22 @@ export const queryEnergyAssistant = async (req: Request, res: Response) => {
       totalKwh: b.energyReadings.reduce((sum, r) => sum + r.consumptionKwh, 0),
     })).sort((a, b) => b.totalKwh - a.totalKwh);
 
-    const highestBldg = bldgTotals[0] || { name: 'Academic Block', totalKwh: 45000 };
-    const totalPotentialSavings = recommendations.reduce((sum, r) => sum + r.estimatedCostSaving, 0);
+    const highestBldg = bldgTotals[0] || null;
+    const organization = await prisma.organization.findUnique({ where: { id: orgId }, select: { currency: true } });
+    const currency = organization?.currency || 'configured currency';
+    const totalPotentialSavings = recommendations.reduce((sum, r) => sum + Number(r.estimatedCostSaving || 0), 0);
 
     let answer = '';
     let citations: any[] = [];
 
     if (q.includes('which building') || q.includes('highest') || q.includes('most electricity')) {
-      answer = `Based on verified historical meter readings, **${highestBldg.name}** is the highest electricity consumer in your organization, with total registered consumption of **${highestBldg.totalKwh.toLocaleString()} kWh**. The top drivers are high computer laboratory densities and continuous HVAC loads during class transitions.`;
-      citations = [
+      answer = highestBldg ? `Across the readings currently stored, **${highestBldg.name}** has the highest registered consumption at **${highestBldg.totalKwh.toLocaleString()} kWh**. This total is not normalized for floor area or operating conditions.` : 'No building energy readings are available for this organization yet.';
+      citations = highestBldg ? [
         { type: 'meter_aggregation', label: `${highestBldg.name} sub-meters`, value: `${highestBldg.totalKwh.toLocaleString()} kWh` },
-      ];
+      ] : [];
     } else if (q.includes('saving') || q.includes('inefficienc') || q.includes('reduce')) {
-      answer = `EcoGrid's Operational Intelligence and Optimization engines have identified **$${totalPotentialSavings.toLocaleString()}** in potential monthly financial savings across ${recommendations.length} actionable measures.\n\nKey recommendations include:\n` +
-        recommendations.map((r, i) => `${i + 1}. **${r.title}**: Estimated savings of **$${r.estimatedCostSaving}/mo** (Priority: ${r.priority}).`).join('\n') +
-        `\n\nThese adjustments align with timetable off-hours and peak tariff shaving without interrupting academic schedules.`;
-      citations = recommendations.map((r) => ({ type: 'recommendation', label: r.title, value: `$${r.estimatedCostSaving}/mo` }));
+      answer = recommendations.length ? `Persisted A7 recommendations have configured-tariff potential cost estimates totaling **${currency} ${totalPotentialSavings.toLocaleString()}** for their stated evidence windows. These are potential estimates, not monthly or realized savings.\n\n` + recommendations.map((r, i) => `${i + 1}. **${r.title}**: ${currency} ${Number(r.estimatedCostSaving || 0).toLocaleString()} potential estimate (Priority: ${r.priority}).`).join('\n') : 'There are no priced A7 recommendations yet. Refresh recommendations after tariff and meter data are available; no financial savings are inferred without an applicable configured tariff.';
+      citations = recommendations.map((r) => ({ type: 'recommendation', label: r.title, value: `${currency} ${Number(r.estimatedCostSaving || 0)}` }));
     } else if (q.includes('anomal') || q.includes('spike') || q.includes('alert')) {
       if (anomalies.length > 0) {
         answer = `There are currently **${anomalies.length} active anomalies** detected:\n` +

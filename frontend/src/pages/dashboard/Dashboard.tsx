@@ -161,7 +161,7 @@ export const Dashboard: React.FC = () => {
             <DollarSign className="w-4 h-4 text-blue-400" />
           </div>
           <div className="text-xl font-bold text-white">
-            {summary?.totalExpenditure != null ? `$${summary.totalExpenditure.toLocaleString()}` : '—'}
+            {summary?.totalExpenditure != null ? `${summary?.currency || ''} ${summary.totalExpenditure.toLocaleString()}` : '—'}
           </div>
           <div className="text-[10px] text-slate-400 mt-1">Based on configured tariff</div>
         </div>
@@ -185,9 +185,9 @@ export const Dashboard: React.FC = () => {
             <Lightbulb className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-xl font-bold text-emerald-400">
-            ${summary?.potentialMonthlySavings?.toLocaleString() ?? '—'} <span className="text-xs font-normal text-emerald-400/80">/mo</span>
+            {summary?.currency ? `${summary.currency} ` : ''}{summary?.potentialSavingsCost?.toLocaleString() ?? '—'}
           </div>
-          <div className="text-[10px] text-emerald-300/80 mt-1">Organization-wide recommendations; not source-filtered</div>
+          <div className="text-[10px] text-emerald-300/80 mt-1">Priced A7 potential for its observed evidence window; not monthly</div>
         </div>
       </div>
 

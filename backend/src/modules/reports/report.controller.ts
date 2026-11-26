@@ -29,11 +29,8 @@ export const getEnergyReport = async (req: Request, res: Response) => {
     });
 
     const recommendations = await prisma.recommendation.findMany({
-      where: { organizationId: orgId },
+      where: { organizationId: orgId, generationSource: 'A7_ENGINE', financialEstimateAvailable: true, status: { in: ['NEW','UNDER_REVIEW','APPROVED','IN_PROGRESS'] } },
     });
-
-    const tariff = await prisma.electricityTariff.findFirst({ where: { organizationId: orgId } });
-    const rate = tariff?.pricePerKwh || 0.15;
 
     const totalKwh = readings.reduce((sum, r) => sum + r.consumptionKwh, 0);
     const solarKwh = solar.reduce((sum, s) => sum + s.generationKwh, 0);
@@ -43,14 +40,16 @@ export const getEnergyReport = async (req: Request, res: Response) => {
     const totalEmissionsKgCo2 = Math.round(gridKwh * factor);
     const emissionsSavedBySolarKgCo2 = Math.round(solarKwh * factor);
 
-    const totalCost = Math.round(gridKwh * rate);
-    const potentialSavingsCost = recommendations.reduce((sum, r) => sum + r.estimatedCostSaving, 0);
+    const totalCost = null;
+    const potentialSavingsCost = recommendations.reduce((sum, r) => sum + Number(r.estimatedCostSaving || 0), 0);
+    const organization = await prisma.organization.findUnique({ where: { id: orgId }, select: { currency: true } });
 
     return res.json({
       reportTitle: `Campus Operational Energy & Carbon Report (${String(period).toUpperCase()})`,
       generatedAt: new Date().toISOString(),
       gridEmissionFactor: factor,
       metrics: {
+        currency: organization?.currency || null,
         totalEnergyConsumedKwh: Math.round(totalKwh),
         solarEnergyGeneratedKwh: Math.round(solarKwh),
         gridElectricityPurchasedKwh: Math.round(gridKwh),
