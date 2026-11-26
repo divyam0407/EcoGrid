@@ -14,6 +14,8 @@ model Organization {
   address      String?
   timezone     String   @default("UTC")
   currency     String   @default("USD")
+  tier         String   @default("COMMERCIAL_PRODUCTION") // OrganizationTier: DEMO_SANDBOX, RESEARCH_BENCHMARK, COMMERCIAL_PRODUCTION
+  isBenchmark  Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -31,6 +33,8 @@ model Organization {
   optimizations OptimizationRun[]
   scenarios    Scenario[]
   auditLogs    AuditLog[]
+  importBatches DataImportBatch[]
+  benchmarkRuns BenchmarkEvaluationRun[]
 }
 
 model User {
@@ -60,13 +64,19 @@ model OrganizationMember {
 }
 
 model Building {
-  id             String       @id @default(uuid())
-  organizationId String
-  name           String
-  buildingType   String       @default("ACADEMIC") // ACADEMIC, LAB, LIBRARY, RESIDENTIAL, AUDITORIUM
-  address        String?
-  totalArea      Float?
-  createdAt      DateTime     @default(now())
+  id                String   @id @default(uuid())
+  organizationId    String
+  name              String
+  buildingType      String   @default("ACADEMIC") // ACADEMIC, LAB, LIBRARY, RESIDENTIAL, AUDITORIUM
+  address           String?
+  totalArea         Float?
+  externalId        String?  // Source-specific building ID (e.g., IIITD_Academic_Block, UnivClass_Theresa)
+  siteId            String?  // Site identifier (e.g., Site_0, IIITD_Okhla)
+  yearBuilt         Int?
+  floorCount        Int?
+  primarySpaceUsage String?  // Standardized space usage (Education, Office, Lab, Lodging, etc.)
+  dataSource        String   @default("SYNTHETIC_DEMO") // DataSourceType
+  createdAt         DateTime @default(now())
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   departments    Department[]
@@ -74,6 +84,7 @@ model Building {
   meters         Meter[]
   energyReadings EnergyReading[]
   schedules      OperationalSchedule[]
+  occupancyRecords OccupancyRecord[]
   solar          SolarInstallation[]
   batteries      Battery[]
   predictions    Prediction[]
@@ -114,15 +125,19 @@ model Room {
 }
 
 model Meter {
-  id             String       @id @default(uuid())
-  organizationId String
-  buildingId     String
-  roomId         String?
-  meterName      String
-  meterType      String       @default("MAIN_FEEDER") // MAIN_FEEDER, SUB_METER, HVAC, LIGHTING, PLUG_LOAD
-  sourceType     String       @default("MANUAL_CSV")  // MANUAL_CSV, IOT_MQTT, MODBUS
-  unit           String       @default("kWh")
-  status         String       @default("ACTIVE")
+  id               String       @id @default(uuid())
+  organizationId   String
+  buildingId       String
+  roomId           String?
+  meterName        String
+  meterType        String       @default("MAIN_FEEDER") // MAIN_FEEDER, SUB_METER, HVAC, LIGHTING, PLUG_LOAD
+  sourceType       String       @default("MANUAL_CSV")  // MANUAL_CSV, IOT_MQTT, MODBUS
+  unit             String       @default("kWh")
+  status           String       @default("ACTIVE")
+  externalMeterId  String?      // Source-specific meter ID (e.g., meter_0, AHU_Feeder_M01)
+  physicalLocation String?
+  multiplier       Float        @default(1.0)
+  dataSource       String       @default("SYNTHETIC_DEMO") // DataSourceType
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   building       Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
@@ -132,26 +147,41 @@ model Meter {
 }
 
 model EnergyReading {
-  id             String       @id @default(uuid())
-  organizationId String
-  meterId        String
-  buildingId     String
-  roomId         String?
-  timestamp      DateTime
-  consumptionKwh Float
-  powerKw        Float?
-  source         String       @default("CSV_UPLOAD")
-  qualityStatus  String       @default("VALIDATED") // VALIDATED, ESTIMATED, ANOMALOUS, FLAG_CHECK
-  createdAt      DateTime     @default(now())
+  id               String           @id @default(uuid())
+  organizationId   String
+  meterId          String
+  buildingId       String
+  roomId           String?
+  batchId          String?
+  timestamp        DateTime         // Canonical UTC timestamp
+  sourceLocalTime  String?          // Original local timestamp string from source
+  consumptionKwh   Float            // Normalized interval energy in kWh
+  powerKw          Float?           // Average interval power in kW
+  rawReading       Float?           // Original un-scaled/un-differenced reading
+  rawUnit          String?          // Original instrument unit (W, Wh, kWh, cumulative_kWh)
+  voltageV         Float?           // Volts (e.g., I-BLEND 1-min telemetry)
+  currentA         Float?           // Amperes
+  frequencyHz      Float?           // Grid frequency (Hz)
+  powerFactor      Float?           // Power factor (0.0 - 1.0)
+  apparentPowerVa  Float?           // Apparent power (VA)
+  reactivePowerVar Float?           // Reactive power (VAR)
+  intervalMinutes  Int              @default(60)
+  dataSource       String           @default("SYNTHETIC_DEMO") // DataSourceType
+  source           String           @default("CSV_UPLOAD")
+  qualityStatus    String           @default("VALIDATED") // DataQualityStatus: MEASURED, CALCULATED_INTERVAL, ESTIMATED_IMPUTED, FLAGGED_OUTLIER, METER_RESET_ROLLOVER, INVALID_REJECTED, VALIDATED
+  createdAt        DateTime         @default(now())
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  meter          Meter        @relation(fields: [meterId], references: [id], onDelete: Cascade)
-  building       Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
-  room           Room?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  meter          Meter            @relation(fields: [meterId], references: [id], onDelete: Cascade)
+  building       Building         @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  room           Room?            @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  batch          DataImportBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, timestamp])
   @@index([buildingId, timestamp])
   @@index([meterId, timestamp])
+  @@index([batchId])
+  @@index([organizationId, dataSource, timestamp])
 }
 
 model OperationalSchedule {
@@ -177,17 +207,25 @@ model OperationalSchedule {
 }
 
 model OccupancyRecord {
-  id             String   @id @default(uuid())
+  id             String           @id @default(uuid())
   organizationId String
-  roomId         String
+  buildingId     String?
+  roomId         String?
+  batchId        String?
   timestamp      DateTime
   occupancyCount Int
-  sourceType     String   @default("ESTIMATED") // SCHEDULED, SENSOR, MANUAL, ESTIMATED
-  confidence     Float    @default(0.9)
+  sourceType     String           @default("ESTIMATED") // SCHEDULED, WIFI_ASSOCIATION, PIR_SENSOR, MANUAL, ESTIMATED
+  granularity    String           @default("BUILDING_LEVEL") // BUILDING_LEVEL, FLOOR_LEVEL, ROOM_LEVEL
+  dataSource     String           @default("SYNTHETIC_DEMO") // DataSourceType
+  confidence     Float            @default(0.9)
 
-  room           Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  building       Building?        @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  room           Room?            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  batch          DataImportBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
 
   @@index([roomId, timestamp])
+  @@index([buildingId, timestamp])
+  @@index([batchId])
 }
 
 model ElectricityTariff {
@@ -382,4 +420,63 @@ model AuditLog {
 
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model DataImportBatch {
+  id                 String            @id @default(uuid())
+  organizationId     String
+  dataSource         String            // DataSourceType enum
+  datasetName        String
+  license            String
+  sourceUrl          String?
+  originalFilename   String
+  fileSha256         String
+  sourceTimezone     String
+  rawUnit            String
+  preprocessingVer   String
+  importedAt         DateTime          @default(now())
+
+  totalRowsProcessed Int
+  validRecordsCount  Int
+  imputedCount       Int               @default(0)
+  flaggedCount       Int               @default(0)
+  rejectedCount      Int               @default(0)
+  minTimestamp       DateTime?
+  maxTimestamp       DateTime?
+  errorLogJson       String?
+
+  organization       Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  readings           EnergyReading[]
+  occupancyRecords   OccupancyRecord[]
+
+  @@index([organizationId, dataSource])
+  @@index([fileSha256])
+}
+
+model BenchmarkEvaluationRun {
+  id                 String       @id @default(uuid())
+  organizationId     String
+  name               String
+  modelType          String       // XGBOOST, RANDOM_FOREST, SEASONAL_NAIVE, MILP_OPTIMIZER, ISOLATION_FOREST
+  horizonHours       Int
+  trainStart         DateTime
+  trainEnd           DateTime
+  valStart           DateTime?
+  valEnd             DateTime?
+  testStart          DateTime
+  testEnd            DateTime
+
+  mae                Float?
+  rmse               Float?
+  mape               Float?
+  baselineMae        Float?
+  improvementPct     Float?
+
+  configurationJson  String
+  metricsReportJson  String?
+  createdAt          DateTime     @default(now())
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, modelType])
 }
