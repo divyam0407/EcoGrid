@@ -212,7 +212,7 @@ export const AnomalyDetection: React.FC = () => {
             <p className="text-xs text-slate-300 mb-3">{a.description}</p>
 
             {/* Metrics Breakdown */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-850 p-2.5 rounded-lg border border-slate-800 text-xs mb-3 font-mono">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-slate-850 p-2.5 rounded-lg border border-slate-800 text-xs mb-3 font-mono">
               <div>
                 <span className="text-[10px] uppercase text-slate-400 block font-sans">Observed Load</span>
                 <span className="font-bold text-rose-400">{a.observedValue} kWh</span>
@@ -228,8 +228,12 @@ export const AnomalyDetection: React.FC = () => {
                 </span>
               </div>
               <div>
+                <span className="text-[10px] uppercase text-slate-400 block font-sans">Historical Baseline</span>
+                <span className="text-slate-300 truncate block font-sans text-[11px]">{a.detectionMethod || 'Existing detection'} · {a.baselineSampleCount ?? '—'} samples</span>
+              </div>
+              <div>
                 <span className="text-[10px] uppercase text-slate-400 block font-sans">Action</span>
-                <span className="text-slate-300 truncate block font-sans text-[11px]">{a.suggestedAction || 'Audit equipment'}</span>
+                <span className="text-slate-300 truncate block font-sans text-[11px]">{a.suggestedAction || 'Review evidence; no action is inferred.'}</span>
               </div>
             </div>
 

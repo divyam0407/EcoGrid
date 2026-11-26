@@ -8,6 +8,9 @@ from tempfile import TemporaryDirectory
 import secrets
 import os
 import shutil
+import hashlib
+import re
+import joblib
 
 from intelligence.app.api.schemas.forecast_schemas import (
     ForecastRequest, ForecastResponse, ForecastPoint, ForecastMetrics
@@ -26,6 +29,7 @@ from intelligence.app.api.schemas.digital_twin_schemas import (
 )
 
 from intelligence.app.core.forecasting.ml_forecasting import DemandForecastingEngine
+from intelligence.app.core.forecasting.preprocessing import prepare_hourly
 from intelligence.app.core.anomaly_detection.statistical import AnomalyDetectionEngine
 from intelligence.app.core.optimization.energy_optimizer import MathematicalEnergyOptimizer
 from intelligence.app.core.operational_intelligence.correlator import OperationalCorrelationEngine
@@ -185,13 +189,18 @@ def health():
     }
 
 @app.post("/api/forecast/predict", response_model=ForecastResponse)
-def predict_demand(req: ForecastRequest):
+def predict_demand(req: ForecastRequest, x_import_service_token: str | None = Header(None)):
+    expected_token = _import_service_token()
+    if not expected_token or not x_import_service_token or not secrets.compare_digest(expected_token, x_import_service_token):
+        raise HTTPException(status_code=401, detail="Forecast service authentication failed.")
     try:
         raw_hist = [h.dict() for h in req.historical_data]
         if not raw_hist:
             raise HTTPException(status_code=400, detail="Historical readings cannot be empty.")
+        if req.horizon_hours not in (24, 168):
+            raise HTTPException(status_code=422, detail="Supported forecast horizons are 24 or 168 hours.")
 
-        engine = DemandForecastingEngine(model_type=req.model_type)
+        engine = DemandForecastingEngine(model_type=req.model_type, timezone=req.timezone)
         metrics_dict, _ = engine.train_and_evaluate(raw_hist)
         
         hist_df = pd.DataFrame(raw_hist)
@@ -204,21 +213,103 @@ def predict_demand(req: ForecastRequest):
         )
 
         return ForecastResponse(
-            model_name=f"{req.model_type.upper()} Regressor",
-            model_version="v1.2-operational-aware",
+            model_name=engine.selected_model.replace("_", " ").title(),
+            model_version="a8-chronological-v1",
             forecast_generated_at=datetime.utcnow().isoformat(),
             horizon_hours=req.horizon_hours,
             metrics=ForecastMetrics(**metrics_dict),
-            forecasts=[ForecastPoint(**p) for p in points_dict]
+            forecasts=[ForecastPoint(**p) for p in points_dict],
+            limitations=["Weather observations are unavailable in persisted meter records.",
+                         "Occupancy is not used unless verified actual observations are supplied.",
+                         "Forecasts are meter-level hourly energy; no building/room disaggregation is inferred."]
         )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Forecast failed: {type(e).__name__}") from e
+
+
+def _model_directory(organization_id: str) -> Path:
+    org_key = hashlib.sha256(organization_id.encode("utf-8")).hexdigest()
+    root = Path(os.environ.get("MODEL_ARTIFACT_DIR", Path(__file__).resolve().parents[2] / "model-artifacts"))
+    directory = root / org_key
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        directory.chmod(0o700)
+    except OSError:
+        pass
+    return directory
+
+
+def _require_model_token(token: str | None):
+    expected = _import_service_token()
+    if not expected or not token or not secrets.compare_digest(expected, token):
+        raise HTTPException(status_code=401, detail="Forecast service authentication failed.")
+
+
+@app.post("/api/forecast/models/train")
+def train_forecast_model(payload: Dict[str, Any], x_import_service_token: str | None = Header(None)):
+    _require_model_token(x_import_service_token)
+    try:
+        model_id = str(payload["model_id"])
+        organization_id = str(payload["organization_id"])
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", model_id):
+            raise ValueError("Invalid model identifier.")
+        readings = payload.get("historical_data") or []
+        engine = DemandForecastingEngine(str(payload.get("model_type", "auto")), str(payload.get("timezone", "UTC")))
+        metrics, _ = engine.train_and_evaluate(readings)
+        directory = _model_directory(organization_id)
+        target = directory / f"{model_id}.joblib"
+        temp = directory / f".{model_id}.joblib.tmp"
+        joblib.dump(engine, temp, compress=3)
+        temp.replace(target)
+        target.chmod(0o600)
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        return {"model_id": model_id, "algorithm": engine.selected_model, "metrics": metrics,
+                "artifact_path": str(target), "artifact_sha256": digest,
+                "feature_set": engine.feature_columns}
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Model training failed: {type(error).__name__}") from error
+
+
+@app.post("/api/forecast/models/{model_id}/predict")
+def predict_registered_model(model_id: str, payload: Dict[str, Any], x_import_service_token: str | None = Header(None)):
+    _require_model_token(x_import_service_token)
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", model_id):
+        raise HTTPException(status_code=404, detail="Model not found.")
+    organization_id = str(payload.get("organization_id", ""))
+    if not organization_id:
+        raise HTTPException(status_code=400, detail="Organization scope is required.")
+    directory = _model_directory(organization_id)
+    artifact = directory / f"{model_id}.joblib"
+    if not artifact.is_file():
+        raise HTTPException(status_code=404, detail="Model artifact not found.")
+    try:
+        engine = joblib.load(artifact)
+        horizon = int(payload.get("horizon_hours", 24))
+        forecasts = engine.generate_forecast(pd.DataFrame(payload.get("historical_data") or []), horizon)
+        recent_hourly, _ = prepare_hourly(payload.get("historical_data") or [], engine.timezone)
+        actual_history = [{"timestamp": row.timestamp.isoformat(), "actual_kwh": float(row.consumption_kwh),
+                           "predicted_demand_kw": float(row.consumption_kwh)}
+                          for row in recent_hourly.dropna(subset=["consumption_kwh"]).tail(168).itertuples()]
+        return {"model_id": model_id, "model_name": engine.selected_model.replace("_", " ").title(),
+                "forecasts": forecasts, "history": actual_history, "horizon_hours": horizon,
+                "feature_set": engine.feature_columns, "generated_at": datetime.utcnow().isoformat()}
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Model prediction failed: {type(error).__name__}") from error
 
 @app.post("/api/anomalies/detect", response_model=AnomalyDetectionResponse)
-def detect_anomalies(req: AnomalyDetectionRequest):
+def detect_anomalies(req: AnomalyDetectionRequest, x_import_service_token: str | None = Header(None)):
+    _require_model_token(x_import_service_token)
     try:
         readings = [r.dict() for r in req.readings]
-        detector = AnomalyDetectionEngine(method=req.method, sensitivity=req.sensitivity)
+        detector = AnomalyDetectionEngine(method=req.method, sensitivity=req.sensitivity, timezone=req.timezone)
         results = detector.detect(readings)
 
         return AnomalyDetectionResponse(

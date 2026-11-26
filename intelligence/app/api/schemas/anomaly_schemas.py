@@ -10,10 +10,18 @@ class AnomalyReading(BaseModel):
     meter_id: Optional[str] = None
     expected_baseline_kwh: Optional[float] = None
     is_scheduled_period: Optional[bool] = True
+    quality_status: Optional[str] = None
+    interval_minutes: Optional[int] = None
+    is_holiday: Optional[bool] = None
+    is_exam_period: Optional[bool] = None
+    scheduled_classes: Optional[int] = None
+    schedule_data_available: Optional[bool] = None
+    calendar_data_available: Optional[bool] = None
 
 class AnomalyDetectionRequest(BaseModel):
     method: str = "combined"  # z_score, isolation_forest, combined
     sensitivity: float = 2.0  # z-score threshold or contamination factor
+    timezone: str = "UTC"
     readings: List[AnomalyReading]
 
 class DetectedAnomaly(BaseModel):
@@ -27,10 +35,14 @@ class DetectedAnomaly(BaseModel):
     observed_value: float
     deviation_percent: float
     deviation_kwh: float
-    confidence: float
+    confidence: Optional[float] = None
+    baseline_sample_count: Optional[int] = None
+    quality_status: Optional[str] = None
+    interval_minutes: Optional[int] = None
+    operational_context: Optional[dict] = None
     detection_method: str
     description: str
-    suggested_action: str
+    suggested_action: Optional[str] = None
 
 class AnomalyDetectionResponse(BaseModel):
     total_analyzed: int

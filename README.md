@@ -9,8 +9,8 @@ EcoGrid is an operational energy intelligence and mathematical optimization plat
 
 - 🏢 **Multi-Tier Infrastructure Hierarchy:** Manage organizations, buildings, departments, rooms, sub-meters, solar arrays, and battery banks.
 - 📅 **Operational Intelligence Engine:** Compares validated meter readings with academic timetables, calendars, configured room hours, and available occupancy evidence to surface explainable operational patterns for review.
-- 📈 **Machine Learning Demand Forecasting:** Multi-horizon (24-Hour & 7-Day) forecasting using XGBoost and Random Forest with chronological train/test splits, time-lag features, and evaluation metrics (MAE, RMSE, MAPE).
-- 🚨 **Multi-Model Anomaly Detection:** Combines statistical moving-average Z-scores with Scikit-learn Isolation Forests to catch surges, spikes, and nocturnal idle leaks with a facility management resolution workflow.
+- 📈 **Predictive Analytics:** Tenant-scoped model registry, background training, explicit activation/rollback, baseline comparison, chronological holdouts, persisted forecasts, and prediction-versus-actual monitoring. ABC demo results are synthetic-demo diagnostics, not real-world accuracy claims.
+- 🚨 **Anomaly Intelligence:** Prior same-local-hour weekday median/MAD comparisons with persisted evidence and review workflow. Anomalies do not automatically become savings recommendations.
 - ⚡ **Mathematical Optimization Engine (MILP):** Formulated in PuLP (CBC Solver) to optimize multi-source energy dispatch (Grid, Rooftop Solar, Battery Bank) under time-of-use tariffs, battery SOC physics, and peak demand constraints.
 - ☀️ **Solar & Battery Storage Management:** State-of-charge (SOC %) monitoring, degradation cost factoring, and peak demand shaving.
 - 💡 **Actionable Recommendation Engine:** Evidence-backed operational interventions with review workflows. Savings are only reported when a validated calculation supports them.
@@ -34,6 +34,13 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 *(Intelligence Service health check available at `http://localhost:8000/health`)*
+
+For local forecasting, keep `IMPORT_SERVICE_TOKEN` consistent between Express and
+the intelligence service. In Docker Compose, model artifacts persist in the
+`modeldata` volume; back up that volume together with PostgreSQL. See
+[`docs/A8-forecasting.md`](docs/A8-forecasting.md) for model lifecycle, features,
+validation methodology, and limitations. Weather is unavailable in persisted
+historical readings, and actual occupancy is not yet a forecast feature.
 
 ### 3. Configure PostgreSQL and start the backend
 ```bash

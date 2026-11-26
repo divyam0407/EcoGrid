@@ -45,9 +45,19 @@ Base URL: `/api/v1`
 
 ### 5. Demand Forecasting
 - `POST /api/v1/forecast/run`
-  - Body: `{ horizonHours: 24, modelType: "xgboost" }`
-  - Returns 24h/7d forecasts, confidence bounds, and MAE/RMSE/MAPE metrics.
+  - Requires an activated organization-owned meter model. Persists idempotent 24h/7d forecast intervals; empirical validation-error bounds are not calibrated confidence intervals.
+- `POST /api/v1/forecast/models/train`
+  - Queues background training; returns HTTP 202 and a model/job ID.
+- `GET /api/v1/forecast/models` and `GET /api/v1/forecast/models/:modelId`
+  - Lists organization-scoped versions, status, evaluation, features and provenance.
+- `POST /api/v1/forecast/models/:modelId/activate`
+  - Activates a ready version for its meter and source; activating an older ready version performs rollback.
+- `POST /api/v1/forecast/models/:modelId/retry`
+  - Queues a new version after a failed training job.
+- `GET /api/v1/forecast/monitoring`
+  - Matches forecasts to compatible observed intervals and reports measured errors only.
 - `GET /api/v1/forecast`
+  - Lists saved predictions for the caller's organization, optionally filtered by meter, building or source.
 
 ### 6. Anomaly Detection
 - `POST /api/v1/anomalies/detect`

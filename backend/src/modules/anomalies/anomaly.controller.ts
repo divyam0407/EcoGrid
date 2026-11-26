@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { prisma, config } from '../../config';
 import axios from 'axios';
+import { operationalFeatures } from '../forecasts/operational-features';
 
 export const detectAnomalies = async (req: Request, res: Response) => {
   try {
@@ -13,8 +14,8 @@ export const detectAnomalies = async (req: Request, res: Response) => {
 
     const readings = await prisma.energyReading.findMany({
       where,
-      orderBy: { timestamp: 'desc' },
-      take: 1200,
+      orderBy: { timestamp: 'asc' },
+      take: 10000,
       include: { building: true, room: true, meter: true },
     });
 
@@ -22,38 +23,46 @@ export const detectAnomalies = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No energy readings available for anomaly detection.' });
     }
 
+    const organization = await prisma.organization.findUnique({ where: { id: orgId }, select: { timezone: true } });
+    const operationsByBuilding = new Map<string, Map<string, any>>();
+    for (const bldgId of new Set(readings.map((r) => r.buildingId))) {
+      const subset = readings.filter((r) => r.buildingId === bldgId);
+      const operations = await operationalFeatures(orgId, bldgId, subset.map((r) => r.timestamp), organization?.timezone || 'UTC');
+      operationsByBuilding.set(bldgId, new Map(operations.map((v) => [v.timestamp, v])));
+    }
     const payload = {
       method,
       sensitivity,
+      timezone: organization?.timezone || 'UTC',
       readings: readings.map((r) => ({
-        timestamp: r.sourceLocalTime || r.timestamp.toISOString(),
+        timestamp: r.timestamp.toISOString(),
         consumption_kwh: r.consumptionKwh,
         power_kw: r.powerKw,
-        building_id: r.building?.name || r.buildingId,
-        room_id: r.room?.roomNumber,
-        meter_id: r.meter?.meterName,
+        building_id: r.buildingId,
+        room_id: r.roomId,
+        meter_id: r.meterId,
+        quality_status: r.qualityStatus,
+        ...(operationsByBuilding.get(r.buildingId)?.get(r.timestamp.toISOString()) || {}),
         expected_baseline_kwh: null,
       })),
     };
 
     let detectionData;
     try {
-      const pyRes = await axios.post(`${config.pythonServiceUrl}/api/anomalies/detect`, payload, { timeout: 15000 });
+      const pyRes = await axios.post(`${config.pythonServiceUrl}/api/anomalies/detect`, payload, { timeout: 120000,
+        headers: { 'X-Import-Service-Token': config.importServiceToken } });
       detectionData = pyRes.data;
     } catch (err: any) {
       console.warn('Python anomaly service unavailable:', err.message);
       return res.status(503).json({ error: 'Anomaly service unavailable. No synthetic anomalies were generated.' });
     }
 
-    // Save newly detected anomalies to database
-    for (const a of detectionData.anomalies) {
-      const bldgMatch = readings.find((r) => (r.building?.name || '') === a.building_id) || readings[0];
-      await prisma.anomaly.create({
-        data: {
+    // Evidence is tenant-scoped and idempotent across repeated scans.
+    const evidence = detectionData.anomalies.map((a: any) => ({
           organizationId: orgId,
-          buildingId: bldgMatch.buildingId,
-          meterId: bldgMatch.meterId,
-          roomId: bldgMatch.roomId,
+          buildingId: a.building_id,
+          meterId: a.meter_id,
+          roomId: a.room_id,
           anomalyType: a.anomaly_type.toUpperCase(),
           dataSource: dataSource === 'all' ? 'MIXED_SOURCE' : String(dataSource),
           severity: a.severity.toUpperCase(),
@@ -63,11 +72,16 @@ export const detectAnomalies = async (req: Request, res: Response) => {
           deviationPercent: a.deviation_percent,
           description: a.description,
           suggestedAction: a.suggested_action,
+          detectionMethod: a.detection_method,
+          baselineSampleCount: a.baseline_sample_count,
+          qualityReportJson: JSON.stringify({ qualityStatus: a.quality_status || 'UNKNOWN', intervalMinutes: a.interval_minutes || null,
+            evidence: 'only valid measured/validated/calculated interval readings considered' }),
+          operationalContextJson: JSON.stringify(a.operational_context || { holiday: 'unavailable', timetable: 'unavailable', occupancy: 'not used' }),
+          sourceKey: `${dataSource}:${a.meter_id}:${new Date(a.timestamp).toISOString()}:${a.detection_method}`,
           status: 'OPEN',
           detectedAt: new Date(a.timestamp),
-        },
-      });
-    }
+    }));
+    if (evidence.length) await prisma.anomaly.createMany({ data: evidence, skipDuplicates: true });
 
     return res.json(detectionData);
   } catch (error: any) {

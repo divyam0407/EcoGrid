@@ -82,6 +82,18 @@ directory/volume. Back up and restrict that storage in production. A completed
 batch exposes source identification, unit/timezone details, target mapping,
 file hashes and a downloadable rejected-row report.
 
+### Forecast model artifacts
+
+Express starts a PostgreSQL-backed training worker with the application server;
+training requests return immediately and can be polled through the model API.
+The Python intelligence service stores compressed model artifacts under
+`MODEL_ARTIFACT_DIR`, isolated into organization-hash directories. Compose mounts
+the persistent `modeldata` volume at `/app/model-artifacts`. Back up that volume
+with PostgreSQL, and restrict local artifact directory permissions. Artifacts
+are not committed to Git. Activate a ready version explicitly; a previous ready
+version can be re-activated as rollback. See [A8 forecasting](A8-forecasting.md)
+for data requirements and evaluation limits.
+
 ## 2. Production Docker Compose Deployment
 
 Set `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, a strong `JWT_SECRET`,

@@ -24,29 +24,92 @@ import {
 } from 'recharts';
 
 export const DemandForecasting: React.FC = () => {
-  const [modelType, setModelType] = useState<string>('xgboost');
+  const [modelType, setModelType] = useState<string>('auto');
   const [horizon, setHorizon] = useState<number>(24);
   const [forecastData, setForecastData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [dataSources, setDataSources] = useState<string[]>([]);
   const [dataSource, setDataSource] = useState('SYNTHETIC_DEMO');
   const [error, setError] = useState('');
-
-  useEffect(() => { api.get('/energy/sources').then((response) => setDataSources(response.data.sources || [])).catch(() => setDataSources([])); }, []);
+  const [meters, setMeters] = useState<any[]>([]);
+  const [meterId, setMeterId] = useState('');
+  const [models, setModels] = useState<any[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [monitoring, setMonitoring] = useState<any>(null);
+  const [forecastHistory, setForecastHistory] = useState<any[]>([]);
+  const [training, setTraining] = useState(false);
+  const chartData = [
+    ...(forecastData?.history || []).map((point: any) => ({ ...point, observed_demand_kw: point.actual_kwh, predicted_demand_kw: null })),
+    ...(forecastData?.forecasts || []).map((point: any) => ({ ...point, observed_demand_kw: null, series: 'Forecast' })),
+  ];
 
   useEffect(() => {
-    runModelForecast();
-  }, [modelType, horizon, dataSource]);
+    api.get('/forecast/options').then((response) => {
+      const items = response.data.meters || [];
+      setMeters(items);
+      if (items.length) { setMeterId(items[0].id); setDataSource(items[0].dataSource); }
+    }).catch(() => setMeters([]));
+  }, []);
+
+  const refreshModels = async () => {
+    if (!meterId) return;
+    const result = await api.get('/forecast/models', { params: { meterId } });
+    const items = result.data.models || [];
+    setModels(items);
+    if (!selectedModelId || !items.some((item: any) => item.id === selectedModelId)) {
+      setSelectedModelId(items.find((item: any) => item.isActive)?.id || items[0]?.id || '');
+    }
+  };
+
+  const refreshForecastHistory = async () => {
+    if (!meterId) return;
+    const result = await api.get('/forecast', { params: { meterId, limit: 168 } });
+    setForecastHistory((result.data.predictions || []).slice().reverse());
+  };
+
+  useEffect(() => { refreshModels().catch(() => setModels([])); }, [meterId]);
+  useEffect(() => {
+    if (!meterId) return;
+    api.get('/forecast/monitoring', { params: { meterId, ...(selectedModelId ? { modelId: selectedModelId } : {}) } })
+      .then((result) => setMonitoring(result.data)).catch(() => setMonitoring(null))
+      .finally(() => refreshForecastHistory().catch(() => setForecastHistory([])));
+  }, [meterId, selectedModelId]);
+  useEffect(() => {
+    const chosen = models.find((item) => item.id === selectedModelId);
+    if (!chosen || !['QUEUED', 'TRAINING'].includes(chosen.status)) return;
+    const timer = setInterval(() => { refreshModels().catch(() => undefined); }, 2500);
+    return () => clearInterval(timer);
+  }, [models, selectedModelId, meterId]);
+
+  const queueTraining = async () => {
+    setTraining(true); setError('');
+    try {
+      const result = await api.post('/forecast/models/train', { meterId, dataSource, modelType });
+      setSelectedModelId(result.data.model.id);
+      await refreshModels();
+    } catch (err) { setError((err as any)?.response?.data?.error || 'Training could not be queued.'); }
+    finally { setTraining(false); }
+  };
+
+  const activateModel = async () => {
+    if (!selectedModelId) return;
+    try { await api.post(`/forecast/models/${selectedModelId}/activate`); await refreshModels(); }
+    catch (err) { setError((err as any)?.response?.data?.error || 'Model could not be activated.'); }
+  };
 
   const runModelForecast = async () => {
     setLoading(true);
     try {
       const res = await api.post('/forecast/run', {
+        meterId,
+        modelId: selectedModelId,
         horizonHours: horizon,
         modelType,
         dataSource,
       });
       setForecastData(res.data);
+      const result = await api.get('/forecast/monitoring', { params: { meterId, modelId: selectedModelId } });
+      setMonitoring(result.data);
+      await refreshForecastHistory();
       setError('');
     } catch (err) {
       setForecastData(null);
@@ -62,16 +125,14 @@ export const DemandForecasting: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-white tracking-tight">Machine Learning Demand Forecasting</h1>
-          <p className="text-xs text-slate-400">
-            Multi-horizon energy demand predictions leveraging time series lag features, academic schedules & weather
-          </p>
+          <p className="text-xs text-slate-400">Meter-level demand forecasts trained and evaluated from observed readings, with explicit model versions.</p>
         </div>
 
         {/* Controls */}
         <div className="flex items-center space-x-3">
-          <select value={dataSource} onChange={(e) => setDataSource(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200">
-            <option value="SYNTHETIC_DEMO">ABC University demo</option>
-            {dataSources.filter((source) => source !== 'SYNTHETIC_DEMO').map((source) => <option key={source} value={source}>{source}</option>)}
+          <select value={meterId} onChange={(e) => { const next = meters.find((item) => item.id === e.target.value); setMeterId(e.target.value); if (next) setDataSource(next.dataSource); setForecastData(null); }} className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200">
+            <option value="">Select a meter</option>
+            {meters.map((meter) => <option key={meter.id} value={meter.id}>{meter.building.name} · {meter.meterName} · {meter.dataSource}</option>)}
           </select>
           {/* Model Type */}
           <select
@@ -79,7 +140,8 @@ export const DemandForecasting: React.FC = () => {
             onChange={(e) => setModelType(e.target.value)}
             className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 font-semibold"
           >
-            <option value="xgboost">XGBoost Regressor (Recommended)</option>
+            <option value="auto">Select by validation</option>
+            <option value="xgboost">XGBoost (optional)</option>
             <option value="random_forest">Random Forest Regressor</option>
             <option value="baseline">Baseline Seasonal Naive</option>
           </select>
@@ -91,21 +153,68 @@ export const DemandForecasting: React.FC = () => {
             className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500 font-semibold"
           >
             <option value={24}>Next 24 Hours</option>
-            <option value={168}>Next 7 Days (168h)</option>
+            <option value={168} disabled={!models.find((item) => item.id === selectedModelId)?.metrics?.horizon_metrics?.['168']?.available}>Next 7 Days (168h)</option>
           </select>
 
           <button
+            onClick={queueTraining}
+            disabled={training || !meterId}
+            className="flex items-center space-x-1.5 bg-sky-700 hover:bg-sky-600 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"
+          ><span>{training ? 'Queueing…' : 'Train new version'}</span></button>
+          <button
             onClick={runModelForecast}
-            disabled={loading}
+            disabled={loading || !meterId || !models.some((item) => item.id === selectedModelId && item.isActive && item.status === 'READY')}
             className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>{loading ? 'Inferring...' : 'Re-Run'}</span>
+            <span>{loading ? 'Forecasting…' : 'Forecast'}</span>
           </button>
         </div>
       </div>
 
       {error && <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/40 p-3 text-xs text-amber-200">{error}</div>}
+
+      <section className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><h2 className="text-sm font-bold text-white">Model registry</h2><p className="text-xs text-slate-400">Training runs in a background worker; activate a ready version explicitly.</p></div>
+          <div className="flex gap-2">
+            <select value={selectedModelId} onChange={(e) => setSelectedModelId(e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
+              <option value="">Select a model</option>
+              {models.map((model) => <option key={model.id} value={model.id}>v{model.version} · {model.algorithm} · {model.status}{model.isActive ? ' · active' : ''}</option>)}
+            </select>
+            <button onClick={activateModel} disabled={!selectedModelId || models.find((m) => m.id === selectedModelId)?.status !== 'READY'} className="bg-emerald-700 disabled:opacity-40 rounded px-3 py-1 text-xs text-white">Activate version</button>
+          </div>
+        </div>
+        {selectedModelId && (() => { const model = models.find((item) => item.id === selectedModelId); return model && <div className="grid sm:grid-cols-4 gap-2 text-xs text-slate-300">
+          <div>Status: <b>{model.status}</b> · {model.stage} ({model.progressPercent}%)</div>
+          <div>Version: <b>v{model.version}</b> · {model.algorithm}</div>
+          <div>Train/validation/test: {model.trainingRows}/{model.validationRows}/{model.testRows}</div>
+          <div>{model.errorMessage || (model.artifactSha256 ? `Artifact SHA-256 ${model.artifactSha256.slice(0, 12)}…` : 'Artifact pending')}</div>
+        </div>; })()}
+      </section>
+
+      {forecastData?.metrics?.comparison && <section className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <h2 className="text-sm font-bold text-white">Validation selection and held-out comparison</h2>
+        <p className="mt-1 mb-3 text-xs text-slate-400">Selection is based on validation MAE. Test results are reported after selection and are not used to choose the model.</p>
+        <div className="overflow-auto"><table className="w-full text-xs text-slate-300"><thead><tr className="text-left text-slate-500"><th className="py-1">Candidate</th><th>Validation MAE</th><th>Test MAE</th><th>Test RMSE</th><th>Test WAPE</th></tr></thead><tbody>
+          {Object.entries(forecastData.metrics.comparison).map(([name, values]: [string, any]) => <tr key={name} className="border-t border-slate-800"><td className="py-2">{name}{name === forecastData.metrics.selected_model ? ' · selected' : ''}</td><td>{values.validation?.mae?.toFixed?.(2) ?? '—'}</td><td>{values.test?.mae?.toFixed?.(2) ?? '—'}</td><td>{values.test?.rmse?.toFixed?.(2) ?? '—'}</td><td>{values.test?.wape?.toFixed?.(1) ?? '—'}%</td></tr>)}
+        </tbody></table></div>
+        <div className="mt-3 grid sm:grid-cols-2 gap-2">{[24, 168].map((hours) => { const result = forecastData.metrics.horizon_metrics?.[String(hours)]; return <div key={hours} className="rounded border border-slate-800 p-2 text-xs text-slate-300">{hours}-hour fixed-origin held-out check: {result?.available ? `MAE ${result.metrics.mae.toFixed(2)} kWh · RMSE ${result.metrics.rmse.toFixed(2)} kWh · ${result.origins} origin` : result?.reason || 'Not evaluated'}</div>; })}</div>
+      </section>}
+
+      <section className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <h2 className="text-sm font-bold text-white">Prediction monitoring</h2>
+        <p className="mt-1 text-xs text-slate-400">Only matched, quality-approved actual intervals contribute. Unobserved intervals remain pending.</p>
+        <div className="mt-3 flex gap-6 text-xs text-slate-300"><span>Compared intervals: <b>{monitoring?.metrics?.n ?? '—'}</b></span><span>MAE: <b>{monitoring?.metrics?.mae?.toFixed?.(2) ?? '—'} kWh</b></span><span>RMSE: <b>{monitoring?.metrics?.rmse?.toFixed?.(2) ?? '—'} kWh</b></span><span>WAPE: <b>{monitoring?.metrics?.wape?.toFixed?.(1) ?? '—'}%</b></span></div>
+        <div className="mt-4 h-56">
+          {forecastHistory.some((point) => point.actualKwh != null) ? <ResponsiveContainer width="100%" height="100%"><LineChart data={forecastHistory.filter((point) => point.actualKwh != null)}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" /><XAxis dataKey="forecastTimestamp" tickFormatter={(v) => new Date(v).toLocaleDateString()} stroke="#64748b" tick={{ fontSize: 10 }} />
+            <YAxis stroke="#64748b" tick={{ fontSize: 10 }} /><Tooltip labelFormatter={(v) => new Date(v).toLocaleString()} />
+            <Legend /><Line dataKey="predictedKwh" name="Predicted kWh" stroke="#10b981" dot={false} /><Line dataKey="actualKwh" name="Actual kWh" stroke="#38bdf8" dot={false} />
+          </LineChart></ResponsiveContainer> : <div className="h-full flex items-center justify-center text-xs text-slate-500">Forecasts will appear here once matching actual readings arrive.</div>}
+        </div>
+        <p className="text-[10px] text-slate-500">Stored forecasts: {forecastHistory.length}. Error metrics exclude forecasts without a compatible observed interval.</p>
+      </section>
 
       {/* Model Performance & Evaluation Metrics (Module 5.4) */}
       <p className="text-[11px] text-slate-500">Metrics use a chronological holdout from this selected source. They are not a claim of commercial accuracy or energy savings.</p>
@@ -116,7 +225,7 @@ export const DemandForecasting: React.FC = () => {
             {forecastData?.model_name || '—'}
           </div>
           <div className="text-[10px] text-slate-400 mt-1 font-mono">
-            {forecastData?.model_version || 'Selected source: ' + dataSource}
+            {forecastData?.model?.modelVersion || (models.find((item) => item.id === selectedModelId)?.isActive ? 'Active registry version' : 'Train and activate a model')}
           </div>
         </div>
 
@@ -125,7 +234,7 @@ export const DemandForecasting: React.FC = () => {
           <div className="text-xl font-bold text-white">
             {forecastData?.metrics?.mae ?? '—'} <span className="text-xs font-normal text-slate-400">kWh</span>
           </div>
-          <div className="text-[10px] text-emerald-400 mt-1">Evaluated on test slice</div>
+            <div className="text-[10px] text-emerald-400 mt-1">Chronological held-out test</div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl">
@@ -158,10 +267,10 @@ export const DemandForecasting: React.FC = () => {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-sm font-bold text-white">
-              Predicted Load and Indicative Model Range
+              Historical readings and registered model forecast
             </h3>
             <p className="text-[11px] text-slate-400">
-              Forecast from observed readings in {dataSource}; no occupancy, timetable or weather values are inferred.
+              Forecast for the selected meter from {dataSource}; no occupancy or weather values are inferred.
             </p>
           </div>
           <div className="flex items-center space-x-3 text-xs">
@@ -179,7 +288,7 @@ export const DemandForecasting: React.FC = () => {
         <div className="h-80 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
-              data={forecastData?.forecasts || []}
+              data={chartData}
               margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
             >
               <defs>
@@ -221,8 +330,9 @@ export const DemandForecasting: React.FC = () => {
                 stroke="#10b981"
                 strokeWidth={2.5}
                 dot={false}
-                name="Predicted Demand (kW)"
+                name="Forecast Demand (kW)"
               />
+              <Line type="monotone" dataKey="observed_demand_kw" stroke="#38bdf8" strokeWidth={1.8} dot={false} name="Observed Demand (kW)" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -243,7 +353,7 @@ export const DemandForecasting: React.FC = () => {
               <tr>
                 <th className="px-4 py-2.5">Forecast Time (UTC)</th>
                 <th className="px-4 py-2.5">Predicted Demand (kW)</th>
-                <th className="px-4 py-2.5">95% Bound Range</th>
+                <th className="px-4 py-2.5">Empirical P90 Error Range</th>
                 <th className="px-4 py-2.5">Calendar Context</th>
               </tr>
             </thead>
