@@ -24,6 +24,8 @@ model Organization {
   meters          Meter[]
   energyReadings  EnergyReading[]
   schedules       OperationalSchedule[]
+  calendarEvents  AcademicCalendarEvent[]
+  operationalInsights OperationalInsight[]
   tariffs         ElectricityTariff[]
   solar           SolarInstallation[]
   batteries       Battery[]
@@ -84,6 +86,8 @@ model Building {
   meters           Meter[]
   energyReadings   EnergyReading[]
   schedules        OperationalSchedule[]
+  calendarEvents   AcademicCalendarEvent[]
+  operationalInsights OperationalInsight[]
   occupancyRecords OccupancyRecord[]
   solar            SolarInstallation[]
   batteries        Battery[]
@@ -102,6 +106,8 @@ model Department {
 
   building Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
   rooms    Room[]
+  schedules OperationalSchedule[]
+  calendarEvents AcademicCalendarEvent[]
 }
 
 model Room {
@@ -119,6 +125,8 @@ model Room {
   department       Department?           @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   meters           Meter[]
   schedules        OperationalSchedule[]
+  calendarEvents   AcademicCalendarEvent[]
+  operationalInsights OperationalInsight[]
   occupancyRecords OccupancyRecord[]
   anomalies        Anomaly[]
   energyReadings   EnergyReading[]
@@ -201,12 +209,92 @@ model OperationalSchedule {
   endTime           String // "11:00"
   expectedOccupancy Int       @default(30)
   sourceType        String    @default("TIMETABLE_CSV")
+  timezone          String    @default("UTC")
+  recurrenceRule    String    @default("NONE") // NONE, WEEKLY
+  recurrenceEnd     DateTime?
+  status            String    @default("ACTIVE") // ACTIVE, CANCELLED
+  departmentId      String?
+  importBatchId     String?
+  sourceRow         Int?
+  recordKey         String?
+  updatedAt         DateTime  @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   building     Building     @relation(fields: [buildingId], references: [id], onDelete: Cascade)
   room         Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  importBatch  DataImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, buildingId, roomId])
+  @@index([organizationId, status, dayOfWeek])
+  @@index([importBatchId])
+  @@unique([organizationId, recordKey])
+}
+
+model AcademicCalendarEvent {
+  id             String   @id @default(uuid())
+  organizationId String
+  buildingId     String?
+  departmentId   String?
+  roomId         String?
+  title          String
+  eventType      String // HOLIDAY, EXAMINATION, VACATION, SPECIAL_EVENT
+  startDatetime  DateTime
+  endDatetime    DateTime
+  timezone       String
+  allDay         Boolean  @default(false)
+  status         String   @default("ACTIVE") // ACTIVE, CANCELLED
+  sourceType     String   @default("MANUAL_ENTRY")
+  importBatchId  String?
+  sourceRow      Int?
+  recordKey      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building     Building? @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  room         Room? @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  importBatch  DataImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, startDatetime, endDatetime])
+  @@index([organizationId, eventType, status])
+  @@index([buildingId, startDatetime])
+  @@index([roomId, startDatetime])
+  @@index([importBatchId])
+  @@unique([organizationId, recordKey])
+}
+
+model OperationalInsight {
+  id                String   @id @default(uuid())
+  organizationId    String
+  buildingId        String?
+  roomId            String?
+  category          String
+  title             String
+  reason            String
+  recommendation    String
+  periodStart       DateTime
+  periodEnd         DateTime
+  observedEnergyKwh Float?
+  estimatedSavingsKwh Float?
+  estimatedSavingsCost Float?
+  confidence        String   @default("LIMITED_EVIDENCE")
+  evidenceJson      String
+  limitationsJson   String
+  status            String   @default("NEW") // NEW, REVIEWED, DISMISSED, ACTIONED
+  approvalStatus    String   @default("NOT_REQUESTED")
+  outcomeJson       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  building     Building? @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+  room         Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status, createdAt])
+  @@index([buildingId, periodStart])
+  @@index([roomId, periodStart])
 }
 
 model OccupancyRecord {
@@ -466,6 +554,8 @@ model DataImportBatch {
   occupancyRecords OccupancyRecord[]
   files            ImportFile[]
   rejectedRows     ImportRejectedRow[]
+  schedules        OperationalSchedule[]
+  calendarEvents   AcademicCalendarEvent[]
 
   @@unique([organizationId, requestFingerprint])
   @@index([organizationId, dataSource])

@@ -8,12 +8,12 @@ EcoGrid is an operational energy intelligence and mathematical optimization plat
 ## 🌟 Core Highlights & Architectural Features
 
 - 🏢 **Multi-Tier Infrastructure Hierarchy:** Manage organizations, buildings, departments, rooms, sub-meters, solar arrays, and battery banks.
-- 📅 **Operational Intelligence Engine (Signature Module):** Correlates organizational timetables with real-time meter telemetry. Pinpoints equipment left powered after lectures, excessive idle baselines, and empty rooms cooling at full blast.
+- 📅 **Operational Intelligence Engine:** Compares validated meter readings with academic timetables, calendars, configured room hours, and available occupancy evidence to surface explainable operational patterns for review.
 - 📈 **Machine Learning Demand Forecasting:** Multi-horizon (24-Hour & 7-Day) forecasting using XGBoost and Random Forest with chronological train/test splits, time-lag features, and evaluation metrics (MAE, RMSE, MAPE).
 - 🚨 **Multi-Model Anomaly Detection:** Combines statistical moving-average Z-scores with Scikit-learn Isolation Forests to catch surges, spikes, and nocturnal idle leaks with a facility management resolution workflow.
 - ⚡ **Mathematical Optimization Engine (MILP):** Formulated in PuLP (CBC Solver) to optimize multi-source energy dispatch (Grid, Rooftop Solar, Battery Bank) under time-of-use tariffs, battery SOC physics, and peak demand constraints.
 - ☀️ **Solar & Battery Storage Management:** State-of-charge (SOC %) monitoring, degradation cost factoring, and peak demand shaving.
-- 💡 **Actionable Recommendation Engine:** Concrete, evidence-backed operational interventions with estimated monthly dollar savings and a human-in-the-loop approval workflow.
+- 💡 **Actionable Recommendation Engine:** Evidence-backed operational interventions with review workflows. Savings are only reported when a validated calculation supports them.
 - 🔮 **Campus Energy Digital Twin:** Data-driven sandbox simulating hypothetical changes (e.g. compressing hours to 5 PM, hybrid attendance, expanding solar arrays) completely isolated from live meter records.
 - 📄 **Executive Reporting & Scope 2 Carbon Analytics:** Automatic generation of daily, weekly, and monthly audits with configurable grid carbon emission factors.
 - 💬 **AI-Powered Energy Assistant:** Grounded Natural Language Question-Answering assistant providing direct citations to database meter logs and optimization runs.
@@ -25,7 +25,7 @@ EcoGrid is an operational energy intelligence and mathematical optimization plat
 ### 1. Prerequisites
 - **Node.js:** v20+ / v26
 - **Python:** v3.10+ with `pip`
-- **Database:** SQLite (embedded out-of-the-box in `backend/prisma/dev.db`) or PostgreSQL 16 via Docker
+- **Database:** PostgreSQL 16+ (required for development and production)
 
 ### 2. Start Intelligence Service
 ```bash
@@ -35,16 +35,16 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 *(Intelligence Service health check available at `http://localhost:8000/health`)*
 
-### 3. Start Backend & Seed ABC University Demo
+### 3. Configure PostgreSQL and start the backend
 ```bash
 cd backend
 npm install
+# Create an empty PostgreSQL database and configure DATABASE_URL in backend/.env.
 npx prisma generate
-npx prisma db push
-npx ts-node prisma/seed.ts
+npm run prisma:migrate:deploy
 npm run dev
 ```
-*(Backend running at `http://localhost:5001/health`)*
+Use the same PostgreSQL deployment process in development and production. Do not run `prisma db push`, `prisma migrate reset`, or the demo seed against an existing database. The legacy SQLite demo database is retained as a read-only migration source; it is not an application datasource.
 
 ### 4. Start React Frontend
 ```bash
@@ -64,10 +64,29 @@ The platform includes a pre-seeded, realistic 60-day operational dataset for **A
 - **7,200 Hourly Energy Readings & 1,440 Solar Readings.**
 - **Seeded Anomalies & Class Timetable Overrun Scenarios.**
 
-### Instant Demo Credentials:
-- **Campus Administrator:** `admin@abc.edu` / `admin123`
-- **Energy Facility Manager:** `facility@abc.edu` / `admin123`
-- *Or click **"Explore Pre-Seeded Demo"** on the login screen for one-click access.*
+An existing ABC University demo database may be provisioned separately. A new empty PostgreSQL database does not contain demo users or readings; do not seed over existing records.
+
+## Timetables and academic calendars
+
+The authenticated **Operations** page supports CSV import, manual entry, cancellation, import history, SHA-256 file provenance, rejected-row downloads, and date/building-filtered operational analysis. Imports are scoped to the signed-in organization and commit accepted rows, rejected-row details, and batch metadata in one PostgreSQL transaction. Re-uploading the same file to the same organization returns its existing import batch.
+
+Download the current templates from the Operations page or `GET /api/v1/schedules/timetable/template` and `GET /api/v1/schedules/calendar/template`.
+
+### Timetable CSV
+
+Required columns: `building_id` or exact `building` name; `room_id` or exact `room` number within the selected building; `activity_name`; `day_of_week` (Monday=0 through Sunday=6, or a day name); `start_time` and `end_time` (`HH:mm`); and `timezone` (IANA name, such as `America/New_York`). `activity_type` is optional (`LECTURE`, `LAB_SESSION`, `EXAMINATION`, `EVENT`, or `MAINTENANCE`). `recurrence` is `WEEKLY` (default) or `NONE`; a `NONE` row also needs a `date` column in `YYYY-MM-DD` format. `recurrence_end` is optional. `expected_occupancy` is an optional non-negative count and is schedule metadata only; leave it blank when unknown. It is never treated as an occupancy observation.
+
+Room and department IDs must belong to the selected organization and building. Overlapping active weekly sessions in a room are rejected. A row with a DST-ambiguous or nonexistent local time must use an explicit UTC offset or be corrected. Invalid rows are retained in the batch rejection report rather than silently discarded.
+
+### Academic calendar CSV
+
+Required columns: `title`, `event_type` (`HOLIDAY`, `EXAMINATION`, `VACATION`, or `SPECIAL_EVENT`), `start_datetime`, `end_datetime`, and `timezone`. `building_id`, `room_id`, and `department_id` are optional scope mappings; when omitted, an event can apply across the organization. `all_day` accepts `true`/`false` (or `1`/`0`), and `status` defaults to `ACTIVE`. Timestamps may include an explicit UTC offset; local timestamps are interpreted in the supplied IANA zone and DST gaps/folds are rejected unless an offset resolves them.
+
+### Operational insight calculations and limitations
+
+The operations analysis includes only readings in validated/measured/calculated interval quality states and reports measured kWh grouped by the mapped building or room meter scope. It compares readings with active timetable windows using each schedule's timezone, applies holiday/vacation dates, and reports energy outside the room's stored `expectedOperatingHours` setting in the organization timezone. That existing field defaults to `08:00-18:00` unless changed, so users should review it before interpreting after-hours results. A building-level meter remains building-level and is not presented as room consumption. “Outside schedule,” “holiday,” and “after hours” are context for investigation, not proof of waste or savings; no financial savings are inferred.
+
+Occupancy is reported as `OBSERVED`, `ESTIMATED`, or `UNKNOWN`, with record source and granularity. Scheduled activity is a separate `SCHEDULED_ACTIVITY` signal and does not prove presence. Building-level occupancy stays at building scope. Missing readings or occupancy remain unknown; the system does not invent measurements or interpolate attendance.
 
 ---
 
