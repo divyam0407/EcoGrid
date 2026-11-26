@@ -197,7 +197,7 @@ class BDG2Importer:
                     continue
 
                 try:
-                    _, utc_iso, local_iso = parse_and_convert_to_utc(str(raw_ts), tz_name)
+                    _, utc_iso, local_iso, _tz_warn = parse_and_convert_to_utc(str(raw_ts), tz_name)
                     val_float = float(raw_val)
                 except ValueError as e:
                     rejected.append(
