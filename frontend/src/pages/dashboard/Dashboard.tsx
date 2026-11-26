@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../services/api';
 import {
   Zap,
@@ -30,31 +31,48 @@ import {
   Cell,
 } from 'recharts';
 
+const sourceLabel = (source: string) => source === 'SYNTHETIC_DEMO'
+  ? 'ABC demo'
+  : source === 'BDG2_BENCHMARK'
+    ? 'BDG2 benchmark'
+    : source === 'ASHRAE_GEPIII'
+      ? 'ASHRAE GEPIII benchmark'
+      : source === 'IBLEND_REAL_WORLD'
+        ? 'I-BLEND real-world'
+        : source;
+
 export const Dashboard: React.FC = () => {
   const [summary, setSummary] = useState<any>(null);
   const [trends, setTrends] = useState<any[]>([]);
   const [buildingComp, setBuildingComp] = useState<any[]>([]);
+  const [dataSources, setDataSources] = useState<string[]>([]);
+  const [selectedSource, setSelectedSource] = useState('all');
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedBuilding, setSelectedBuilding] = useState<string>('all');
-  const [timeRange, setTimeRange] = useState<string>('7'); // days
+  const [timeRange, setTimeRange] = useState<string>('all');
 
   useEffect(() => {
     fetchDashboardData();
-  }, [selectedBuilding, timeRange]);
+  }, [selectedBuilding, timeRange, selectedSource]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      const bldgParam = selectedBuilding !== 'all' ? `&buildingId=${selectedBuilding}` : '';
-      const [sumRes, trendRes, compRes] = await Promise.all([
-        api.get(`/energy/summary?days=${timeRange}${bldgParam}`),
-        api.get(`/energy/trends?interval=daily${bldgParam}`),
-        api.get('/energy/building-comparison'),
+      const filters = new URLSearchParams();
+      if (selectedBuilding !== 'all') filters.set('buildingId', selectedBuilding);
+      filters.set('dataSource', selectedSource);
+      const filterParam = filters.toString() ? `&${filters.toString()}` : '';
+      const [sumRes, trendRes, compRes, sourcesRes] = await Promise.all([
+        api.get(`/energy/summary?days=${timeRange}${filterParam}`),
+        api.get(`/energy/trends?interval=daily${filterParam}`),
+        api.get(`/energy/building-comparison?${selectedSource === 'all' ? '' : `dataSource=${encodeURIComponent(selectedSource)}`}`),
+        api.get('/energy/sources'),
       ]);
 
       setSummary(sumRes.data);
       setTrends(trendRes.data.trends || []);
       setBuildingComp(compRes.data.comparison || []);
+      setDataSources(sourcesRes.data.sources || []);
     } catch (err) {
       console.error('Error fetching dashboard telemetry:', err);
     } finally {
@@ -77,6 +95,10 @@ export const Dashboard: React.FC = () => {
 
         {/* Global Dashboard Filters */}
         <div className="flex items-center space-x-2.5">
+          <select value={selectedSource} onChange={(e) => setSelectedSource(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200">
+            <option value="all">All data sources</option>
+            {dataSources.map((source) => <option key={source} value={source}>{sourceLabel(source)}</option>)}
+          </select>
           <select
             value={selectedBuilding}
             onChange={(e) => setSelectedBuilding(e.target.value)}
@@ -98,6 +120,7 @@ export const Dashboard: React.FC = () => {
             <option value="7">Last 7 Days</option>
             <option value="30">Last 30 Days</option>
             <option value="60">Last 60 Days</option>
+            <option value="all">All Available History</option>
           </select>
         </div>
       </div>
@@ -111,11 +134,11 @@ export const Dashboard: React.FC = () => {
             <Activity className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-xl font-bold text-white">
-            {summary?.totalConsumptionKwh?.toLocaleString() || '184,250'} <span className="text-xs font-normal text-slate-400">kWh</span>
+            {loading ? 'Loading…' : summary?.totalConsumptionKwh?.toLocaleString() ?? '—'} <span className="text-xs font-normal text-slate-400">kWh</span>
           </div>
           <div className="text-[10px] text-emerald-400 mt-1 flex items-center">
             <ArrowDownRight className="w-3 h-3 mr-0.5" />
-            <span>4.2% vs previous period</span>
+            <span>Recorded in selected period</span>
           </div>
         </div>
 
@@ -126,9 +149,9 @@ export const Dashboard: React.FC = () => {
             <Zap className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-xl font-bold text-white">
-            {summary?.peakDemandKw || '98.5'} <span className="text-xs font-normal text-slate-400">kW</span>
+            {loading ? 'Loading…' : summary?.peakDemandKw?.toLocaleString() ?? '—'} <span className="text-xs font-normal text-slate-400">kW</span>
           </div>
-          <div className="text-[10px] text-slate-400 mt-1">14:00 - 15:00 peak hours</div>
+          <div className="text-[10px] text-slate-400 mt-1">Peak across available readings</div>
         </div>
 
         {/* Card 3: Electricity Expenditure */}
@@ -138,9 +161,9 @@ export const Dashboard: React.FC = () => {
             <DollarSign className="w-4 h-4 text-blue-400" />
           </div>
           <div className="text-xl font-bold text-white">
-            ${summary?.totalExpenditure?.toLocaleString() || '24,650'}
+            {summary?.totalExpenditure != null ? `$${summary.totalExpenditure.toLocaleString()}` : '—'}
           </div>
-          <div className="text-[10px] text-slate-400 mt-1">Avg $0.15/kWh TOU rate</div>
+          <div className="text-[10px] text-slate-400 mt-1">Based on configured tariff</div>
         </div>
 
         {/* Card 4: Solar Generation */}
@@ -150,9 +173,9 @@ export const Dashboard: React.FC = () => {
             <SunMedium className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-xl font-bold text-white">
-            {summary?.solarGenerationKwh?.toLocaleString() || '38,400'} <span className="text-xs font-normal text-slate-400">kWh</span>
+            {loading ? 'Loading…' : summary?.solarGenerationKwh?.toLocaleString() ?? '—'} <span className="text-xs font-normal text-slate-400">kWh</span>
           </div>
-          <div className="text-[10px] text-emerald-400 mt-1">Offsets 20.8% grid energy</div>
+          <div className="text-[10px] text-slate-400 mt-1">Recorded solar readings</div>
         </div>
 
         {/* Card 5: Potential Savings */}
@@ -162,9 +185,9 @@ export const Dashboard: React.FC = () => {
             <Lightbulb className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-xl font-bold text-emerald-400">
-            ${summary?.potentialMonthlySavings?.toLocaleString() || '3,450'} <span className="text-xs font-normal text-emerald-400/80">/mo</span>
+            ${summary?.potentialMonthlySavings?.toLocaleString() ?? '—'} <span className="text-xs font-normal text-emerald-400/80">/mo</span>
           </div>
-          <div className="text-[10px] text-emerald-300/80 mt-1">4 approved interventions</div>
+          <div className="text-[10px] text-emerald-300/80 mt-1">Organization-wide recommendations; not source-filtered</div>
         </div>
       </div>
 
@@ -176,11 +199,8 @@ export const Dashboard: React.FC = () => {
           </div>
           <div className="flex-1">
             <div className="flex justify-between items-center text-xs mb-1">
-              <span className="text-slate-300 font-medium">Megapack Battery Bank</span>
-              <span className="text-indigo-400 font-bold font-mono">78% SOC</span>
-            </div>
-            <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-              <div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: '78%' }}></div>
+              <span className="text-slate-300 font-medium">Battery telemetry</span>
+              <Link to="/batteries" className="text-indigo-400 underline">View battery records</Link>
             </div>
           </div>
         </div>
@@ -190,9 +210,9 @@ export const Dashboard: React.FC = () => {
             <AlertTriangle className="w-5 h-5 text-rose-400" />
           </div>
           <div className="flex-1">
-            <div className="text-xs font-medium text-slate-300">Active Operational Anomalies</div>
+            <div className="text-xs font-medium text-slate-300">Organization-wide Active Anomalies</div>
             <div className="text-[11px] text-rose-400 font-semibold mt-0.5">
-              {summary?.activeAnomaliesCount || 2} Anomalies Require Investigation
+              {summary?.activeAnomaliesCount ?? '—'} Anomalies Require Investigation
             </div>
           </div>
         </div>
@@ -204,7 +224,7 @@ export const Dashboard: React.FC = () => {
           <div className="flex-1">
             <div className="text-xs font-medium text-slate-300">Next 24-Hour Forecast</div>
             <div className="text-[11px] text-teal-400 font-semibold mt-0.5">
-              XGBoost Model (MAE 3.4 kWh | 94.4% Accuracy)
+              Forecast results require evaluation on held-out data
             </div>
           </div>
         </div>

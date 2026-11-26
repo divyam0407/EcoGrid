@@ -19,7 +19,12 @@ class AnomalyDetectionEngine:
         anomalies = []
 
         # Group by building or room to compute contextual hourly baselines
-        group_col = 'room_id' if 'room_id' in df.columns and df['room_id'].notna().any() else 'building_id'
+        if 'meter_id' in df.columns and df['meter_id'].notna().any():
+            group_col = 'meter_id'
+        elif 'room_id' in df.columns and df['room_id'].notna().any():
+            group_col = 'room_id'
+        else:
+            group_col = 'building_id'
         df['hour'] = df['datetime'].dt.hour
         df['dow'] = df['datetime'].dt.dayofweek
 
@@ -60,7 +65,7 @@ class AnomalyDetectionEngine:
             if flagged and abs(deviation_kwh) >= 3.0:
                 # Classify type
                 if deviation_kwh > 0:
-                    if row.get('is_scheduled_period') is False or row['hour'] in [22, 23, 0, 1, 2, 3, 4, 5]:
+                    if row.get('is_scheduled_period') is False:
                         atype = "unscheduled_surge"
                         desc = f"Excessive energy consumption of {observed} kWh detected during unscheduled/off-hours period."
                         action = "Check if HVAC or lab computers were left running overnight."

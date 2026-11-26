@@ -13,9 +13,8 @@ class DemandForecastingEngine:
         self.model = None
         self.baseline = BaselineForecaster()
         self.feature_columns = [
-            'hour', 'day_of_week', 'month', 'is_weekend', 'is_holiday',
-            'scheduled_classes', 'scheduled_occupancy', 'temperature_c',
-            'lag_1h', 'lag_24h', 'lag_168h', 'rolling_mean_24h'
+            'hour', 'day_of_week', 'month', 'is_weekend',
+            'lag_1h', 'lag_24h', 'rolling_mean_24h'
         ]
 
     def _prepare_training_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -28,22 +27,9 @@ class DemandForecastingEngine:
         df['month'] = df['datetime'].dt.month
         df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
         
-        if 'is_holiday' not in df.columns:
-            df['is_holiday'] = 0
-        else:
-            df['is_holiday'] = df['is_holiday'].astype(int)
-
-        if 'scheduled_classes' not in df.columns:
-            df['scheduled_classes'] = 0
-        if 'scheduled_occupancy' not in df.columns:
-            df['scheduled_occupancy'] = 0
-        if 'temperature_c' not in df.columns:
-            df['temperature_c'] = 22.0
-
         # Lags and rolling features
-        df['lag_1h'] = df['consumption_kwh'].shift(1).bfill()
-        df['lag_24h'] = df['consumption_kwh'].shift(24).bfill()
-        df['lag_168h'] = df['consumption_kwh'].shift(168).bfill()
+        df['lag_1h'] = df['consumption_kwh'].shift(1)
+        df['lag_24h'] = df['consumption_kwh'].shift(24)
         df['rolling_mean_24h'] = df['consumption_kwh'].rolling(24, min_periods=1).mean()
 
         return df
@@ -51,19 +37,14 @@ class DemandForecastingEngine:
     def train_and_evaluate(self, raw_readings: List[Dict[str, Any]]) -> Tuple[Dict[str, float], Dict[str, Any]]:
         df = pd.DataFrame(raw_readings)
         if len(df) < 48:
-            # Insufficient data fallback
-            self.baseline.fit(pd.DataFrame([{
-                'day_of_week': 0, 'hour': h, 'consumption_kwh': 40.0
-            } for h in range(24)]))
-            return {"mae": 5.0, "rmse": 6.5, "mape": 8.0, "train_size": len(df), "test_size": 0}, {}
+            raise ValueError("At least 48 observed readings are required for forecasting.")
 
-        processed = self._prepare_training_features(df)
-        self.baseline.fit(processed)
-
+        processed = self._prepare_training_features(df).dropna(subset=['lag_1h', 'lag_24h'])
         # Chronological split: last 20% for testing, never random shuffling for time-series!
         split_idx = int(len(processed) * 0.8)
         train_df = processed.iloc[:split_idx]
         test_df = processed.iloc[split_idx:]
+        self.baseline.fit(train_df)
 
         X_train = train_df[self.feature_columns]
         y_train = train_df['consumption_kwh']
@@ -88,17 +69,18 @@ class DemandForecastingEngine:
             if mask.sum() > 0:
                 mape = float(np.mean(np.abs((y_test[mask] - y_pred[mask]) / y_test[mask])) * 100)
             else:
-                mape = 5.0
+                mape = None
         else:
-            baseline_preds = [p['predicted_consumption_kwh'] for p in self.baseline.predict(test_df)]
-            mae = float(mean_absolute_error(y_test, baseline_preds)) if len(test_df) > 0 else 4.0
-            rmse = float(np.sqrt(mean_squared_error(y_test, baseline_preds))) if len(test_df) > 0 else 5.2
-            mape = 6.5
+            baseline_preds = np.array([p['predicted_consumption_kwh'] for p in self.baseline.predict(test_df)])
+            mae = float(mean_absolute_error(y_test, baseline_preds)) if len(test_df) > 0 else None
+            rmse = float(np.sqrt(mean_squared_error(y_test, baseline_preds))) if len(test_df) > 0 else None
+            mask = y_test > 0.1
+            mape = float(np.mean(np.abs((y_test[mask] - baseline_preds[mask]) / y_test[mask])) * 100) if mask.sum() else None
 
         metrics = {
-            "mae": round(mae, 2),
-            "rmse": round(rmse, 2),
-            "mape": round(mape, 2),
+            "mae": round(mae, 2) if mae is not None else None,
+            "rmse": round(rmse, 2) if rmse is not None else None,
+            "mape": round(mape, 2) if mape is not None else None,
             "train_size": len(train_df),
             "test_size": len(test_df)
         }
@@ -135,23 +117,6 @@ class DemandForecastingEngine:
             dow = future_time.weekday()
             month = future_time.month
             is_wknd = 1 if dow in [5, 6] else 0
-            is_hol = 1 if op_info.get('is_holiday', False) else 0
-            sched_classes = op_info.get('scheduled_classes', 0)
-            sched_occ = op_info.get('scheduled_occupancy', 0)
-            temp = op_info.get('temperature_c', 22.0)
-
-            # Auto-infer daytime university activity if future_ops omitted
-            if not future_ops:
-                if is_wknd or is_hol:
-                    sched_classes = 0
-                    sched_occ = 10
-                elif 9 <= hr <= 17:
-                    sched_classes = 12 if hr in [10, 11, 14, 15] else 8
-                    sched_occ = sched_classes * 25
-                else:
-                    sched_classes = 0
-                    sched_occ = 5
-
             # Historical lag estimates
             lag_1 = last_known_kwh if step == 1 else predictions[-1]['predicted_consumption_kwh']
             lag_24 = historical_df['consumption_kwh'].iloc[-24 + (step % 24)] if len(historical_df) >= 24 else recent_24h_mean
@@ -162,10 +127,6 @@ class DemandForecastingEngine:
                 'day_of_week': dow,
                 'month': month,
                 'is_weekend': is_wknd,
-                'is_holiday': is_hol,
-                'scheduled_classes': sched_classes,
-                'scheduled_occupancy': sched_occ,
-                'temperature_c': temp,
                 'lag_1h': lag_1,
                 'lag_24h': lag_24,
                 'lag_168h': lag_168,
@@ -179,7 +140,7 @@ class DemandForecastingEngine:
                 val = base_pred['predicted_consumption_kwh']
 
             # Ensure positive, sensible value
-            val = max(5.0, round(val, 2))
+            val = max(0.0, round(val, 2))
             uncertainty = val * 0.08  # ~8% confidence bounds
             
             predictions.append({
@@ -189,10 +150,7 @@ class DemandForecastingEngine:
                 'confidence_lower': max(0.0, round(val - 1.96 * uncertainty, 2)),
                 'confidence_upper': round(val + 1.96 * uncertainty, 2),
                 'factors': {
-                    'scheduled_classes': sched_classes,
-                    'scheduled_occupancy': sched_occ,
                     'is_weekend': bool(is_wknd),
-                    'temperature_c': temp
                 }
             })
 

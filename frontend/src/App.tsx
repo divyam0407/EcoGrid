@@ -17,6 +17,7 @@ import { Recommendations } from './pages/recommendations/Recommendations';
 import { DigitalTwin } from './pages/digital-twin/DigitalTwin';
 import { Reports } from './pages/reports/Reports';
 import { Settings } from './pages/settings/Settings';
+import { DataImports } from './pages/imports/DataImports';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -55,6 +56,7 @@ export const App: React.FC = () => {
           >
             <Route index element={<Dashboard />} />
             <Route path="energy" element={<EnergyMonitoring />} />
+            <Route path="imports" element={<DataImports />} />
             <Route path="operations" element={<OperationalIntelligence />} />
             <Route path="forecasting" element={<DemandForecasting />} />
             <Route path="anomalies" element={<AnomalyDetection />} />

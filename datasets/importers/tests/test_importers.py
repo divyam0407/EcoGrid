@@ -1,5 +1,6 @@
 import os
 import unittest
+import tempfile
 from datetime import datetime, timezone, timedelta
 from datasets.importers.common.enums import DataSourceType, DataQualityStatus, OccupancyGranularity
 from datasets.importers.common.timezone_utils import (
@@ -346,6 +347,16 @@ class TestIBlendImporter(unittest.TestCase):
         self.assertEqual(occ_records[0].granularity, OccupancyGranularity.BUILDING_LEVEL)
         self.assertEqual(occ_records[0].source_type, "WIFI_ASSOCIATION")
 
+    def test_iblend_rejects_power_unit_mismatch(self):
+        importer = IBlendImporter()
+        with self.assertRaisesRegex(ValueError, "W or kW"):
+            importer.import_electrical_csv(
+                os.path.join(FIXTURES_DIR, "iblend_power_sample.csv"),
+                building_id="test-building",
+                meter_id="test-meter",
+                power_unit="kWh",
+            )
+
 
 class TestBDG2Importer(unittest.TestCase):
     """Integration tests for the BDG2 importer."""
@@ -384,6 +395,16 @@ class TestBDG2Importer(unittest.TestCase):
         self.assertEqual(panther_first.timestamp_utc, "2016-05-01T13:00:00Z")
         self.assertEqual(panther_first.temperature_c, 21.4)
 
+    def test_bdg2_rejects_dst_fall_back_ambiguity(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv") as source:
+            source.write("timestamp,Panther_education_BldgA\n2016-11-06 01:30:00,100\n")
+            source.flush()
+            _, readings, summary = BDG2Importer().import_electricity_csv(
+                source.name, os.path.join(FIXTURES_DIR, "bdg2_metadata_sample.csv")
+            )
+        self.assertEqual(readings, [])
+        self.assertTrue(any("Ambiguous local timestamp" in item.reason for item in summary.rejected_rows))
+
 
 class TestAshraeImporter(unittest.TestCase):
     """Integration tests for the ASHRAE importer."""
@@ -407,6 +428,16 @@ class TestAshraeImporter(unittest.TestCase):
         self.assertAlmostEqual(readings[0].consumption_kwh, 100.0, places=4)
         self.assertEqual(readings[0].raw_unit, "kWh")
         self.assertEqual(readings[0].temperature_c, 24.5)
+
+    def test_ashrae_rejects_dst_fall_back_ambiguity(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv") as source:
+            source.write("building_id,meter,timestamp,meter_reading\n101,0,2016-11-06 01:30:00,100.0\n")
+            source.flush()
+            _, readings, summary = AshraeImporter().import_train_csv(
+                source.name, os.path.join(FIXTURES_DIR, "ashrae_metadata_sample.csv")
+            )
+        self.assertEqual(readings, [])
+        self.assertTrue(any("Ambiguous local timestamp" in item.reason for item in summary.rejected_rows))
 
 
 if __name__ == "__main__":

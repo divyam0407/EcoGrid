@@ -1,8 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 from datetime import datetime
 from typing import List, Dict, Any
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import secrets
+import os
+import shutil
 
 from intelligence.app.api.schemas.forecast_schemas import (
     ForecastRequest, ForecastResponse, ForecastPoint, ForecastMetrics
@@ -26,6 +31,9 @@ from intelligence.app.core.optimization.energy_optimizer import MathematicalEner
 from intelligence.app.core.operational_intelligence.correlator import OperationalCorrelationEngine
 from intelligence.app.core.solar.solar_model import SolarGenerationModel
 from intelligence.app.core.digital_twin.simulator import CampusEnergyDigitalTwinSimulator
+from datasets.importers.ashrae_importer import AshraeImporter
+from datasets.importers.bdg2_importer import BDG2Importer
+from datasets.importers.iblend_importer import IBlendImporter
 
 app = FastAPI(
     title="EcoGrid Intelligence Engine",
@@ -45,6 +53,120 @@ app.add_middleware(
 optimizers = MathematicalEnergyOptimizer()
 correlators = OperationalCorrelationEngine()
 dt_simulators = CampusEnergyDigitalTwinSimulator()
+
+
+def _import_service_token() -> str:
+    token = os.environ.get("IMPORT_SERVICE_TOKEN", "")
+    if token:
+        return token
+    env_file = Path(__file__).resolve().parents[2] / "backend" / ".env"
+    if env_file.is_file():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("IMPORT_SERVICE_TOKEN="):
+                return line.split("=", 1)[1].strip().strip("\"'")
+    return ""
+
+
+def _save_upload(upload: UploadFile, directory: Path, filename: str) -> str:
+    destination = directory / filename
+    with destination.open("wb") as output:
+        shutil.copyfileobj(upload.file, output)
+    return str(destination)
+
+
+@app.post("/api/imports/normalize")
+def normalize_dataset(
+    dataset_type: str = Form(...),
+    building_id: str = Form(...),
+    meter_id: str = Form(...),
+    external_building_id: str = Form(""),
+    raw_unit: str = Form("kWh"),
+    power_unit: str = Form("W"),
+    cumulative_limit_kwh: str = Form(""),
+    readings_file: UploadFile = File(...),
+    metadata_file: UploadFile | None = File(None),
+    weather_file: UploadFile | None = File(None),
+    occupancy_file: UploadFile | None = File(None),
+    x_import_service_token: str | None = Header(None),
+):
+    expected_token = _import_service_token()
+    if not expected_token or not x_import_service_token or not secrets.compare_digest(expected_token, x_import_service_token):
+        raise HTTPException(status_code=401, detail="Import service authentication failed.")
+
+    files = {"readings": readings_file, "metadata": metadata_file, "weather": weather_file, "occupancy": occupancy_file}
+    try:
+        with TemporaryDirectory(prefix="ecogrid-normalize-") as temp_dir:
+            directory = Path(temp_dir)
+            paths = {
+                name: _save_upload(upload, directory, f"{name}.csv")
+                for name, upload in files.items()
+                if upload is not None
+            }
+            if dataset_type == "IBLEND_REAL_WORLD":
+                unit = power_unit.strip()
+                importer = IBlendImporter()
+                normalized, summary = importer.import_electrical_csv(
+                    paths["readings"], external_building_id or building_id, meter_id,
+                    power_unit=unit,
+                    cumulative_limit_kwh=float(cumulative_limit_kwh) if cumulative_limit_kwh.strip() else None,
+                )
+                occupancy, occupancy_rejected = ([], [])
+                if "occupancy" in paths:
+                    occupancy, occupancy_rejected = importer.import_building_occupancy_csv(
+                        paths["occupancy"], external_building_id or building_id
+                    )
+                rejected = [
+                    {**row.to_dict(), "file_field": "readings"}
+                    for row in summary.rejected_rows
+                ] + [
+                    {**row.to_dict(), "file_field": "occupancy"}
+                    for row in occupancy_rejected
+                ]
+                return {
+                    "readings": [row.to_dict() for row in normalized],
+                    "occupancy": [row.to_dict() for row in occupancy],
+                    "buildings": [],
+                    "summary": summary.to_dict(),
+                    "rejections": rejected,
+                    "source_granularity": "BUILDING_LEVEL" if occupancy else None,
+                }
+
+            if dataset_type == "BDG2_BENCHMARK":
+                if "metadata" not in paths:
+                    raise ValueError("BDG2 requires a metadata file.")
+                buildings, normalized, summary = BDG2Importer().import_electricity_csv(
+                    paths["readings"], paths["metadata"], paths.get("weather"),
+                    building_filter=[external_building_id] if external_building_id else None,
+                    raw_unit=raw_unit,
+                )
+            elif dataset_type == "ASHRAE_GEPIII":
+                if "metadata" not in paths:
+                    raise ValueError("ASHRAE requires a building metadata file.")
+                buildings, normalized, summary = AshraeImporter().import_train_csv(
+                    paths["readings"], paths["metadata"], paths.get("weather"),
+                    building_filter=[external_building_id] if external_building_id else None,
+                    raw_unit=raw_unit,
+                )
+            else:
+                raise ValueError("Unsupported dataset type.")
+
+            if external_building_id and not any(item.external_id == external_building_id for item in buildings):
+                raise ValueError("The selected external building ID was not found in the metadata.")
+            return {
+                "readings": [row.to_dict() for row in normalized],
+                "occupancy": [],
+                "buildings": [row.to_dict() for row in buildings],
+                "summary": summary.to_dict(),
+                "rejections": [
+                    {**row.to_dict(), "file_field": "readings"}
+                    for row in summary.rejected_rows
+                ],
+                "source_granularity": "BUILDING_LEVEL",
+            }
+    except (KeyError, TypeError, ValueError, FileNotFoundError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=422, detail=f"Dataset normalization failed: {type(error).__name__}") from error
 
 @app.get("/health")
 def health():

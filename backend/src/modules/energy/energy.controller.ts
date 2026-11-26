@@ -194,12 +194,13 @@ export const uploadEnergyCsv = async (req: Request, res: Response) => {
 export const getEnergyReadings = async (req: Request, res: Response) => {
   try {
     const orgId = req.user?.organizationId!;
-    const { buildingId, meterId, roomId, startDate, endDate, limit } = req.query;
+    const { buildingId, meterId, roomId, startDate, endDate, limit, dataSource } = req.query;
 
     const where: any = { organizationId: orgId };
     if (buildingId) where.buildingId = String(buildingId);
     if (meterId) where.meterId = String(meterId);
     if (roomId) where.roomId = String(roomId);
+    if (dataSource && dataSource !== 'all') where.dataSource = String(dataSource);
 
     if (startDate || endDate) {
       where.timestamp = {};
@@ -224,38 +225,57 @@ export const getEnergyReadings = async (req: Request, res: Response) => {
   }
 };
 
+export const getEnergySources = async (req: Request, res: Response) => {
+  try {
+    const organizationId = req.user!.organizationId;
+    const sources = await prisma.energyReading.findMany({
+      where: { organizationId },
+      distinct: ['dataSource'],
+      select: { dataSource: true },
+      orderBy: { dataSource: 'asc' },
+    });
+    return res.json({ sources: sources.map((item) => item.dataSource) });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
 export const getEnergySummary = async (req: Request, res: Response) => {
   try {
     const orgId = req.user?.organizationId!;
-    const { buildingId, days } = req.query;
+    const { buildingId, days, dataSource } = req.query;
 
-    const dayCount = days ? parseInt(String(days), 10) : 30;
-    const sinceDate = new Date();
-    sinceDate.setDate(sinceDate.getDate() - dayCount);
+    const requestedDays = days ? String(days) : '30';
+    const dayCount = requestedDays === 'all' ? null : Math.max(1, parseInt(requestedDays, 10) || 30);
+    const sinceDate = dayCount === null ? null : new Date(Date.now() - dayCount * 24 * 60 * 60 * 1000);
 
     const where: any = {
       organizationId: orgId,
-      timestamp: { gte: sinceDate },
+      ...(sinceDate ? { timestamp: { gte: sinceDate } } : {}),
     };
     if (buildingId) where.buildingId = String(buildingId);
+    if (dataSource && dataSource !== 'all') where.dataSource = String(dataSource);
 
     const readings = await prisma.energyReading.findMany({
       where,
       orderBy: { timestamp: 'asc' },
     });
 
-    const solarReadings = await prisma.solarReading.findMany({
-      where: {
-        organizationId: orgId,
-        timestamp: { gte: sinceDate },
-      },
-    });
+    const solarReadings = dataSource && dataSource !== 'SYNTHETIC_DEMO'
+      ? []
+      : await prisma.solarReading.findMany({
+        where: {
+          organizationId: orgId,
+          ...(sinceDate ? { timestamp: { gte: sinceDate } } : {}),
+          ...(buildingId ? { installation: { buildingId: String(buildingId) } } : {}),
+        },
+      });
 
     const activeTariff = await prisma.electricityTariff.findFirst({
       where: { organizationId: orgId },
       include: { periods: true },
     });
-    const defaultRate = activeTariff?.pricePerKwh || 0.15;
+    const configuredRate = activeTariff?.pricePerKwh;
 
     let totalKwh = 0;
     let peakDemandKw = 0;
@@ -263,9 +283,9 @@ export const getEnergySummary = async (req: Request, res: Response) => {
 
     readings.forEach((r) => {
       totalKwh += r.consumptionKwh;
-      const kw = r.powerKw || r.consumptionKwh;
+      const kw = r.powerKw ?? (r.consumptionKwh * 60) / r.intervalMinutes;
       if (kw > peakDemandKw) peakDemandKw = kw;
-      totalExpenditure += r.consumptionKwh * defaultRate;
+      if (configuredRate !== undefined) totalExpenditure += r.consumptionKwh * configuredRate;
     });
 
     const totalSolarKwh = solarReadings.reduce((sum, s) => sum + s.generationKwh, 0);
@@ -285,11 +305,11 @@ export const getEnergySummary = async (req: Request, res: Response) => {
       periodDays: dayCount,
       totalConsumptionKwh: Math.round(totalKwh),
       peakDemandKw: Math.round(peakDemandKw * 10) / 10,
-      totalExpenditure: Math.round(totalExpenditure),
+      totalExpenditure: configuredRate === undefined ? null : Math.round(totalExpenditure),
       solarGenerationKwh: Math.round(totalSolarKwh),
       gridConsumptionKwh: Math.round(Math.max(0, totalKwh - totalSolarKwh)),
       activeAnomaliesCount: activeAnomalies,
-      potentialMonthlySavings: Math.round(potentialSavings || 3450),
+      potentialMonthlySavings: Math.round(potentialSavings),
     });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
@@ -299,20 +319,23 @@ export const getEnergySummary = async (req: Request, res: Response) => {
 export const getEnergyTrends = async (req: Request, res: Response) => {
   try {
     const orgId = req.user?.organizationId!;
-    const { buildingId, interval } = req.query; // 'hourly', 'daily', 'monthly'
+    const { buildingId, interval, dataSource } = req.query; // 'hourly', 'daily', 'monthly'
 
     const where: any = { organizationId: orgId };
     if (buildingId) where.buildingId = String(buildingId);
+    if (dataSource && dataSource !== 'all') where.dataSource = String(dataSource);
 
     const readings = await prisma.energyReading.findMany({
       where,
       orderBy: { timestamp: 'asc' },
     });
 
-    const solar = await prisma.solarReading.findMany({
-      where: { organizationId: orgId },
-      orderBy: { timestamp: 'asc' },
-    });
+    const solar = dataSource && dataSource !== 'SYNTHETIC_DEMO'
+      ? []
+      : await prisma.solarReading.findMany({
+        where: { organizationId: orgId },
+        orderBy: { timestamp: 'asc' },
+      });
 
     const solarMap = new Map<string, number>();
     solar.forEach((s) => {
@@ -339,7 +362,7 @@ export const getEnergyTrends = async (req: Request, res: Response) => {
       };
 
       existing.consumptionKwh += r.consumptionKwh;
-      const kw = r.powerKw || r.consumptionKwh;
+      const kw = r.powerKw ?? (r.consumptionKwh * 60) / r.intervalMinutes;
       if (kw > existing.peakKw) existing.peakKw = kw;
       existing.count += 1;
 
@@ -367,10 +390,12 @@ export const getEnergyTrends = async (req: Request, res: Response) => {
 export const getBuildingComparison = async (req: Request, res: Response) => {
   try {
     const orgId = req.user?.organizationId!;
+    const dataSource = req.query.dataSource ? String(req.query.dataSource) : undefined;
     const buildings = await prisma.building.findMany({
       where: { organizationId: orgId },
       include: {
         energyReadings: {
+          where: dataSource && dataSource !== 'all' ? { dataSource } : undefined,
           select: { consumptionKwh: true, powerKw: true },
         },
       },
@@ -378,15 +403,15 @@ export const getBuildingComparison = async (req: Request, res: Response) => {
 
     const comparison = buildings.map((b) => {
       const totalKwh = b.energyReadings.reduce((sum, r) => sum + r.consumptionKwh, 0);
-      const maxKw = b.energyReadings.reduce((max, r) => Math.max(max, r.powerKw || r.consumptionKwh), 0);
+      const maxKw = b.energyReadings.reduce((max, r) => Math.max(max, r.powerKw ?? r.consumptionKwh), 0);
       return {
         buildingId: b.id,
         buildingName: b.name,
         buildingType: b.buildingType,
-        totalAreaSqFt: b.totalArea || 45000,
+        totalAreaSqFt: b.totalArea,
         totalConsumptionKwh: Math.round(totalKwh),
         peakDemandKw: Math.round(maxKw * 10) / 10,
-        energyIntensityKwhPerSqFt: b.totalArea ? Math.round((totalKwh / b.totalArea) * 10) / 10 : 12.5,
+        energyIntensityKwhPerSqFt: b.totalArea ? Math.round((totalKwh / b.totalArea) * 10) / 10 : null,
       };
     });
 

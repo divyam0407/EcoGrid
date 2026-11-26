@@ -110,7 +110,7 @@ class BDG2Importer:
                 continue
             tz_name = tz_lookup.get(site_id, "UTC")
             try:
-                _, utc_iso, _ = parse_and_convert_to_utc(str(raw_ts), tz_name)[:3]
+                _, utc_iso, _ = parse_and_convert_to_utc(str(raw_ts), tz_name, reject_ambiguous=True)[:3]
                 weather_map[(site_id, utc_iso)] = float(temp)
             except ValueError:
                 continue
@@ -197,7 +197,7 @@ class BDG2Importer:
                     continue
 
                 try:
-                    _, utc_iso, local_iso, _tz_warn = parse_and_convert_to_utc(str(raw_ts), tz_name)
+                    _, utc_iso, local_iso, _tz_warn = parse_and_convert_to_utc(str(raw_ts), tz_name, reject_ambiguous=True)
                     val_float = float(raw_val)
                 except ValueError as e:
                     rejected.append(

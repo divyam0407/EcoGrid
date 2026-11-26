@@ -34,3 +34,6 @@ npm-debug.log*
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Uploaded source files are retained privately for import audit/retry.
+backend/imports/

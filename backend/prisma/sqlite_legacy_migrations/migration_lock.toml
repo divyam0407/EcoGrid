@@ -1,0 +1,3 @@
+# Archived lock file for the preserved SQLite migration history.
+# The active Prisma migration provider is PostgreSQL.
+provider = "sqlite"

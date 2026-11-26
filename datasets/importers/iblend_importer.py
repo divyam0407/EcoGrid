@@ -1,4 +1,5 @@
 import os
+import math
 import pandas as pd
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -92,6 +93,12 @@ class IBlendImporter:
                 f"I-BLEND CSV missing required timestamp or power/energy columns. Found: {list(df.columns)}"
             )
 
+        normalized_unit = power_unit.strip().lower()
+        if p_col and normalized_unit not in {"w", "kw"}:
+            raise ValueError("Instantaneous I-BLEND power must be declared in W or kW.")
+        if not p_col and normalized_unit != "kwh":
+            raise ValueError("Cumulative I-BLEND energy counters must be declared in kWh.")
+
         parsed_rows: List[Dict[str, Any]] = []
         rejected: List[RejectedRow] = []
         seen_raw_ts = set()
@@ -143,6 +150,19 @@ class IBlendImporter:
                 )
                 continue
 
+            if not math.isfinite(num_val):
+                rejected.append(
+                    RejectedRow(
+                        row_number=int(idx) + 2,
+                        external_building_id=building_id,
+                        external_meter_id=meter_id,
+                        raw_timestamp=str(raw_ts),
+                        raw_value=str(raw_val),
+                        reason="Non-finite electrical measurement rejected.",
+                    )
+                )
+                continue
+
             if num_val < 0 and p_col:
                 rejected.append(
                     RejectedRow(
@@ -172,10 +192,23 @@ class IBlendImporter:
             seen_raw_ts.add(utc_iso)
 
             # Optional electrical telemetry
-            v_val = float(row[v_col]) if v_col and pd.notna(row.get(v_col)) else None
-            i_val = float(row[i_col]) if i_col and pd.notna(row.get(i_col)) else None
-            f_val = float(row[f_col]) if f_col and pd.notna(row.get(f_col)) else None
-            pf_val = float(row[pf_col]) if pf_col and pd.notna(row.get(pf_col)) else None
+            try:
+                v_val = float(row[v_col]) if v_col and pd.notna(row.get(v_col)) else None
+                i_val = float(row[i_col]) if i_col and pd.notna(row.get(i_col)) else None
+                f_val = float(row[f_col]) if f_col and pd.notna(row.get(f_col)) else None
+                pf_val = float(row[pf_col]) if pf_col and pd.notna(row.get(pf_col)) else None
+            except (TypeError, ValueError):
+                rejected.append(
+                    RejectedRow(
+                        row_number=int(idx) + 2,
+                        external_building_id=building_id,
+                        external_meter_id=meter_id,
+                        raw_timestamp=local_iso,
+                        raw_value=str(raw_val),
+                        reason="Malformed optional electrical telemetry rejected.",
+                    )
+                )
+                continue
 
             elec_warn = validate_electrical_parameters(v_val, pf_val, f_val)
             combined_warn = "; ".join(w for w in [elec_warn, tz_warn] if w) or None

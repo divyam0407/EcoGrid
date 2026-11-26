@@ -7,6 +7,8 @@
     "dev:frontend": "cd frontend && npm run dev",
     "dev:intelligence": "/opt/anaconda3/bin/uvicorn intelligence.app.main:app --host 0.0.0.0 --port 8000 --reload",
     "build": "cd backend && npm run build && cd ../frontend && npm run build",
+    "db:migrate:deploy": "npm --workspace ecogrid-backend run prisma:migrate:deploy",
+    "db:migrate:legacy-sqlite": "npm --workspace ecogrid-backend run prisma:migrate:legacy-sqlite",
     "seed": "cd backend && npm run prisma:seed"
   },
   "workspaces": [

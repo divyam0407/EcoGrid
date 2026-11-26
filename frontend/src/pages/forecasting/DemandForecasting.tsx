@@ -28,10 +28,15 @@ export const DemandForecasting: React.FC = () => {
   const [horizon, setHorizon] = useState<number>(24);
   const [forecastData, setForecastData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [dataSources, setDataSources] = useState<string[]>([]);
+  const [dataSource, setDataSource] = useState('SYNTHETIC_DEMO');
+  const [error, setError] = useState('');
+
+  useEffect(() => { api.get('/energy/sources').then((response) => setDataSources(response.data.sources || [])).catch(() => setDataSources([])); }, []);
 
   useEffect(() => {
     runModelForecast();
-  }, [modelType, horizon]);
+  }, [modelType, horizon, dataSource]);
 
   const runModelForecast = async () => {
     setLoading(true);
@@ -39,10 +44,13 @@ export const DemandForecasting: React.FC = () => {
       const res = await api.post('/forecast/run', {
         horizonHours: horizon,
         modelType,
+        dataSource,
       });
       setForecastData(res.data);
+      setError('');
     } catch (err) {
-      console.error('Forecasting run error:', err);
+      setForecastData(null);
+      setError((err as any)?.response?.data?.error || 'Forecast could not be produced for this source.');
     } finally {
       setLoading(false);
     }
@@ -61,6 +69,10 @@ export const DemandForecasting: React.FC = () => {
 
         {/* Controls */}
         <div className="flex items-center space-x-3">
+          <select value={dataSource} onChange={(e) => setDataSource(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200">
+            <option value="SYNTHETIC_DEMO">ABC University demo</option>
+            {dataSources.filter((source) => source !== 'SYNTHETIC_DEMO').map((source) => <option key={source} value={source}>{source}</option>)}
+          </select>
           {/* Model Type */}
           <select
             value={modelType}
@@ -93,22 +105,25 @@ export const DemandForecasting: React.FC = () => {
         </div>
       </div>
 
+      {error && <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/40 p-3 text-xs text-amber-200">{error}</div>}
+
       {/* Model Performance & Evaluation Metrics (Module 5.4) */}
+      <p className="text-[11px] text-slate-500">Metrics use a chronological holdout from this selected source. They are not a claim of commercial accuracy or energy savings.</p>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
         <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl">
           <div className="text-[10px] uppercase text-slate-400 font-bold tracking-wider mb-1">Active Model</div>
           <div className="text-sm font-bold text-emerald-400 truncate">
-            {forecastData?.model_name || 'XGBoost Regressor'}
+            {forecastData?.model_name || '—'}
           </div>
           <div className="text-[10px] text-slate-400 mt-1 font-mono">
-            {forecastData?.model_version || 'v1.2-operational-aware'}
+            {forecastData?.model_version || 'Selected source: ' + dataSource}
           </div>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl">
           <div className="text-[10px] uppercase text-slate-400 font-bold tracking-wider mb-1">Mean Absolute Error</div>
           <div className="text-xl font-bold text-white">
-            {forecastData?.metrics?.mae || '3.42'} <span className="text-xs font-normal text-slate-400">kWh</span>
+            {forecastData?.metrics?.mae ?? '—'} <span className="text-xs font-normal text-slate-400">kWh</span>
           </div>
           <div className="text-[10px] text-emerald-400 mt-1">Evaluated on test slice</div>
         </div>
@@ -116,7 +131,7 @@ export const DemandForecasting: React.FC = () => {
         <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl">
           <div className="text-[10px] uppercase text-slate-400 font-bold tracking-wider mb-1">RMSE</div>
           <div className="text-xl font-bold text-white">
-            {forecastData?.metrics?.rmse || '4.85'} <span className="text-xs font-normal text-slate-400">kWh</span>
+            {forecastData?.metrics?.rmse ?? '—'} <span className="text-xs font-normal text-slate-400">kWh</span>
           </div>
           <div className="text-[10px] text-slate-400 mt-1">Root Mean Square Error</div>
         </div>
@@ -124,7 +139,7 @@ export const DemandForecasting: React.FC = () => {
         <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl">
           <div className="text-[10px] uppercase text-slate-400 font-bold tracking-wider mb-1">MAPE</div>
           <div className="text-xl font-bold text-emerald-400">
-            {forecastData?.metrics?.mape || '5.6'}%
+            {forecastData?.metrics?.mape == null ? '—' : `${forecastData.metrics.mape}%`}
           </div>
           <div className="text-[10px] text-slate-400 mt-1">Mean Absolute % Error</div>
         </div>
@@ -132,7 +147,7 @@ export const DemandForecasting: React.FC = () => {
         <div className="bg-slate-900 border border-slate-800 p-3.5 rounded-xl">
           <div className="text-[10px] uppercase text-slate-400 font-bold tracking-wider mb-1">Chronological Split</div>
           <div className="text-sm font-bold text-white font-mono">
-            {forecastData?.metrics?.train_size || 5760} / {forecastData?.metrics?.test_size || 1440}
+            {forecastData?.metrics ? `${forecastData.metrics.train_size} / ${forecastData.metrics.test_size}` : '—'}
           </div>
           <div className="text-[10px] text-slate-400 mt-1">Strict time-series split (No shuffle)</div>
         </div>
@@ -143,10 +158,10 @@ export const DemandForecasting: React.FC = () => {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-sm font-bold text-white">
-              Predicted Campus Demand & 95% Confidence Bounds
+              Predicted Load and Indicative Model Range
             </h3>
             <p className="text-[11px] text-slate-400">
-              Future {horizon} hours hourly forecast including expected academic lecture and laboratory utilization
+              Forecast from observed readings in {dataSource}; no occupancy, timetable or weather values are inferred.
             </p>
           </div>
           <div className="flex items-center space-x-3 text-xs">
@@ -156,7 +171,7 @@ export const DemandForecasting: React.FC = () => {
             </span>
             <span className="flex items-center space-x-1.5 text-slate-400">
               <span className="w-2.5 h-2.5 rounded-full bg-teal-500/40"></span>
-              <span>Confidence Interval (95%)</span>
+                <span>Indicative range (uncalibrated)</span>
             </span>
           </div>
         </div>
@@ -229,8 +244,7 @@ export const DemandForecasting: React.FC = () => {
                 <th className="px-4 py-2.5">Forecast Time (UTC)</th>
                 <th className="px-4 py-2.5">Predicted Demand (kW)</th>
                 <th className="px-4 py-2.5">95% Bound Range</th>
-                <th className="px-4 py-2.5">Scheduled Classes</th>
-                <th className="px-4 py-2.5">Expected Occupants</th>
+                <th className="px-4 py-2.5">Calendar Context</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
@@ -243,12 +257,7 @@ export const DemandForecasting: React.FC = () => {
                   <td className="px-4 py-2 text-slate-400">
                     [{f.confidence_lower} kW - {f.confidence_upper} kW]
                   </td>
-                  <td className="px-4 py-2 font-sans text-slate-200">
-                    {f.factors?.scheduled_classes || 0} active classes
-                  </td>
-                  <td className="px-4 py-2 font-sans text-slate-400">
-                    {f.factors?.scheduled_occupancy || 0} people
-                  </td>
+                  <td className="px-4 py-2 font-sans text-slate-400">{f.factors?.is_weekend ? 'Weekend calendar feature' : 'Weekday calendar feature'}</td>
                 </tr>
               ))}
             </tbody>

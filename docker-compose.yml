@@ -6,24 +6,33 @@ services:
     container_name: ecogrid-postgres
     restart: always
     environment:
-      POSTGRES_USER: ecogrid
-      POSTGRES_PASSWORD: ecogrid_password
-      POSTGRES_DB: ecogrid_db
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in the root .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in the root .env}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?Set POSTGRES_USER in the root .env} -d ${POSTGRES_DB:?Set POSTGRES_DB in the root .env}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   intelligence:
     build:
-      context: ./intelligence
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: intelligence/Dockerfile
     container_name: ecogrid-intelligence
     restart: always
     ports:
       - "8000:8000"
     environment:
       - PORT=8000
+      - IMPORT_SERVICE_TOKEN=${IMPORT_SERVICE_TOKEN:?Set IMPORT_SERVICE_TOKEN in the environment}
+      - IMPORT_STORAGE_DIR=/app/imports
+    volumes:
+      - importdata:/app/imports
 
   backend:
     build:
@@ -35,12 +44,18 @@ services:
       - "5001:5001"
     environment:
       - PORT=5001
-      - DATABASE_URL=postgresql://ecogrid:ecogrid_password@db:5432/ecogrid_db?schema=public
+      - DATABASE_URL=postgresql://${POSTGRES_USER:?Set POSTGRES_USER in the root .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}@db:5432/${POSTGRES_DB:?Set POSTGRES_DB in the root .env}?schema=public
       - PYTHON_SERVICE_URL=http://intelligence:8000
-      - JWT_SECRET=ecogrid-super-secret-jwt-key-2026
+      - IMPORT_SERVICE_TOKEN=${IMPORT_SERVICE_TOKEN:?Set IMPORT_SERVICE_TOKEN in the environment}
+      - IMPORT_STORAGE_DIR=/app/imports
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the environment}
     depends_on:
-      - db
-      - intelligence
+      db:
+        condition: service_healthy
+      intelligence:
+        condition: service_started
+    volumes:
+      - importdata:/app/imports
 
   frontend:
     build:
@@ -51,7 +66,9 @@ services:
     ports:
       - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
 
 volumes:
   pgdata:
+  importdata:

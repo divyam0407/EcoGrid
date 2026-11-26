@@ -12,6 +12,7 @@ import {
   Lightbulb,
   Boxes,
   FileSpreadsheet,
+  Upload,
   Settings,
   Zap,
 } from 'lucide-react';
@@ -20,6 +21,7 @@ export const Sidebar: React.FC = () => {
   const navItems = [
     { label: 'Overview', to: '/', icon: LayoutDashboard },
     { label: 'Energy Monitoring', to: '/energy', icon: Activity },
+    { label: 'Dataset Imports', to: '/imports', icon: Upload },
     { label: 'Operational Intelligence', to: '/operations', icon: CalendarClock, highlight: true },
     { label: 'Demand Forecasting', to: '/forecasting', icon: TrendingUp },
     { label: 'Anomaly Detection', to: '/anomalies', icon: AlertTriangle },

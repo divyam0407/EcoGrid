@@ -18,6 +18,7 @@ import recommendationRoutes from './modules/recommendations/recommendation.route
 import scenarioRoutes from './modules/scenarios/scenario.routes';
 import reportRoutes from './modules/reports/report.routes';
 import assistantRoutes from './modules/assistant/assistant.routes';
+import importRoutes from './modules/imports/import.routes';
 
 const app = express();
 
@@ -52,6 +53,7 @@ app.use('/api/v1/recommendations', recommendationRoutes);
 app.use('/api/v1/scenarios', scenarioRoutes);
 app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/assistant', assistantRoutes);
+app.use('/api/v1/imports', importRoutes);
 
 // Error Handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

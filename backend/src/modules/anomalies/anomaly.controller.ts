@@ -5,10 +5,11 @@ import axios from 'axios';
 export const detectAnomalies = async (req: Request, res: Response) => {
   try {
     const orgId = req.user?.organizationId!;
-    const { buildingId, method = 'combined', sensitivity = 2.5 } = req.body;
+    const { buildingId, method = 'combined', sensitivity = 2.5, dataSource = 'SYNTHETIC_DEMO' } = req.body;
 
     const where: any = { organizationId: orgId };
     if (buildingId && buildingId !== 'all') where.buildingId = String(buildingId);
+    if (dataSource !== 'all') where.dataSource = String(dataSource);
 
     const readings = await prisma.energyReading.findMany({
       where,
@@ -25,14 +26,13 @@ export const detectAnomalies = async (req: Request, res: Response) => {
       method,
       sensitivity,
       readings: readings.map((r) => ({
-        timestamp: r.timestamp.toISOString(),
+        timestamp: r.sourceLocalTime || r.timestamp.toISOString(),
         consumption_kwh: r.consumptionKwh,
-        power_kw: r.powerKw || r.consumptionKwh,
+        power_kw: r.powerKw,
         building_id: r.building?.name || r.buildingId,
         room_id: r.room?.roomNumber,
         meter_id: r.meter?.meterName,
         expected_baseline_kwh: null,
-        is_scheduled_period: r.timestamp.getHours() >= 9 && r.timestamp.getHours() <= 17,
       })),
     };
 
@@ -41,29 +41,8 @@ export const detectAnomalies = async (req: Request, res: Response) => {
       const pyRes = await axios.post(`${config.pythonServiceUrl}/api/anomalies/detect`, payload, { timeout: 15000 });
       detectionData = pyRes.data;
     } catch (err: any) {
-      console.warn('Python anomaly detection failed, falling back:', err.message);
-      detectionData = {
-        total_analyzed: readings.length,
-        anomalies_found: 4,
-        anomalies: [
-          {
-            timestamp: new Date().toISOString(),
-            building_id: readings[0].building?.name || 'Computer Science Block',
-            room_id: 'Computer Lab 2',
-            meter_id: 'M002',
-            anomaly_type: 'unscheduled_surge',
-            severity: 'critical',
-            expected_value: 12.0,
-            observed_value: 84.5,
-            deviation_percent: 604.2,
-            deviation_kwh: 72.5,
-            confidence: 0.96,
-            detection_method: 'Combined (Z=3.8, IsoForest=True)',
-            description: 'Severe night-time surge of 84.5 kWh vs 12.0 kWh baseline.',
-            suggested_action: 'Dispatch security/facility team to inspect HVAC unit stuck at full cooling.',
-          },
-        ],
-      };
+      console.warn('Python anomaly service unavailable:', err.message);
+      return res.status(503).json({ error: 'Anomaly service unavailable. No synthetic anomalies were generated.' });
     }
 
     // Save newly detected anomalies to database
@@ -76,6 +55,7 @@ export const detectAnomalies = async (req: Request, res: Response) => {
           meterId: bldgMatch.meterId,
           roomId: bldgMatch.roomId,
           anomalyType: a.anomaly_type.toUpperCase(),
+          dataSource: dataSource === 'all' ? 'MIXED_SOURCE' : String(dataSource),
           severity: a.severity.toUpperCase(),
           expectedValue: a.expected_value,
           observedValue: a.observed_value,
@@ -98,12 +78,13 @@ export const detectAnomalies = async (req: Request, res: Response) => {
 export const getAnomalies = async (req: Request, res: Response) => {
   try {
     const orgId = req.user?.organizationId!;
-    const { buildingId, severity, status } = req.query;
+    const { buildingId, severity, status, dataSource } = req.query;
 
     const where: any = { organizationId: orgId };
     if (buildingId) where.buildingId = String(buildingId);
     if (severity) where.severity = String(severity).toUpperCase();
     if (status) where.status = String(status).toUpperCase();
+    if (dataSource && dataSource !== 'all') where.dataSource = String(dataSource);
 
     const anomalies = await prisma.anomaly.findMany({
       where,
@@ -124,6 +105,7 @@ export const getAnomalies = async (req: Request, res: Response) => {
 
 export const updateAnomalyStatus = async (req: Request, res: Response) => {
   try {
+    const orgId = req.user?.organizationId!;
     const { id } = req.params;
     const { status, resolutionNotes } = req.body;
 
@@ -132,10 +114,12 @@ export const updateAnomalyStatus = async (req: Request, res: Response) => {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
 
-    const anomaly = await prisma.anomaly.update({
-      where: { id },
+    const result = await prisma.anomaly.updateMany({
+      where: { id, organizationId: orgId },
       data: { status },
     });
+    if (!result.count) return res.status(404).json({ error: 'Anomaly not found.' });
+    const anomaly = await prisma.anomaly.findFirst({ where: { id, organizationId: orgId } });
 
     return res.json({ anomaly });
   } catch (error: any) {

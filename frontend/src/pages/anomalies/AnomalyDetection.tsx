@@ -19,10 +19,15 @@ export const AnomalyDetection: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [severityFilter, setSeverityFilter] = useState<string>('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [dataSources, setDataSources] = useState<string[]>([]);
+  const [dataSource, setDataSource] = useState('SYNTHETIC_DEMO');
+  const [error, setError] = useState('');
+
+  useEffect(() => { api.get('/energy/sources').then((response) => setDataSources(response.data.sources || [])).catch(() => setDataSources([])); }, []);
 
   useEffect(() => {
     fetchAnomalies();
-  }, [statusFilter, severityFilter]);
+  }, [statusFilter, severityFilter, dataSource]);
 
   const fetchAnomalies = async () => {
     setLoading(true);
@@ -30,11 +35,12 @@ export const AnomalyDetection: React.FC = () => {
       const params = new URLSearchParams();
       if (statusFilter) params.append('status', statusFilter);
       if (severityFilter) params.append('severity', severityFilter);
+      if (dataSource) params.append('dataSource', dataSource);
 
       const res = await api.get(`/anomalies?${params.toString()}`);
       setAnomalies(res.data.anomalies || []);
     } catch (err) {
-      console.error('Error fetching anomalies:', err);
+      setError('Could not load anomalies for this data source.');
     } finally {
       setLoading(false);
     }
@@ -43,10 +49,11 @@ export const AnomalyDetection: React.FC = () => {
   const handleRunDetection = async () => {
     setLoading(true);
     try {
-      await api.post('/anomalies/detect', { method, sensitivity: 2.2 });
+      await api.post('/anomalies/detect', { method, sensitivity: 2.2, dataSource });
+      setError('');
       await fetchAnomalies();
     } catch (err) {
-      console.error('Error running detection:', err);
+      setError((err as any)?.response?.data?.error || 'Anomaly scan failed.');
     } finally {
       setLoading(false);
     }
@@ -101,11 +108,12 @@ export const AnomalyDetection: React.FC = () => {
         <div>
           <h1 className="text-xl font-bold text-white tracking-tight">Abnormal Consumption & Anomaly Detection</h1>
           <p className="text-xs text-slate-400">
-            Automated outlier discovery using statistical baseline Z-scores and Scikit-learn Isolation Forests
+            Source-scoped outlier screening using observed energy readings; no timetable-based labels are inferred.
           </p>
         </div>
 
         <div className="flex items-center space-x-3">
+          <select value={dataSource} onChange={(e) => setDataSource(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200"><option value="SYNTHETIC_DEMO">ABC University demo</option>{dataSources.filter((source) => source !== 'SYNTHETIC_DEMO').map((source) => <option key={source} value={source}>{source}</option>)}</select>
           <select
             value={method}
             onChange={(e) => setMethod(e.target.value)}
@@ -126,6 +134,7 @@ export const AnomalyDetection: React.FC = () => {
           </button>
         </div>
       </div>
+      {error && <div role="alert" className="rounded-lg border border-amber-700 bg-amber-950/40 p-3 text-xs text-amber-200">{error}</div>}
 
       {/* Filter Row */}
       <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-wrap items-center justify-between gap-4">
@@ -189,6 +198,7 @@ export const AnomalyDetection: React.FC = () => {
                 </span>
 
                 <span className="text-xs font-bold text-white">{a.anomalyType.replace(/_/g, ' ')}</span>
+                <span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] text-slate-300">{a.dataSource}</span>
                 <span className="text-xs text-slate-400 font-sans">
                   at {a.building?.name} {a.room ? `(${a.room.roomNumber})` : ''}
                 </span>

@@ -97,7 +97,7 @@ class AshraeImporter:
             site_id = int(row["site_id"])
             tz_name = ASHRAE_SITE_TIMEZONES.get(site_id, "UTC")
             try:
-                _, utc_iso, _ = parse_and_convert_to_utc(str(row["timestamp"]), tz_name)[:3]
+                _, utc_iso, _ = parse_and_convert_to_utc(str(row["timestamp"]), tz_name, reject_ambiguous=True)[:3]
                 weather_map[(site_id, utc_iso)] = float(row["air_temperature"])
             except ValueError:
                 continue
@@ -189,7 +189,7 @@ class AshraeImporter:
                 continue
 
             try:
-                _, utc_iso, local_iso, tz_warn = parse_and_convert_to_utc(str(raw_ts), tz_name)
+                _, utc_iso, local_iso, tz_warn = parse_and_convert_to_utc(str(raw_ts), tz_name, reject_ambiguous=True)
                 val_float = float(raw_val)
             except ValueError as e:
                 rejected.append(

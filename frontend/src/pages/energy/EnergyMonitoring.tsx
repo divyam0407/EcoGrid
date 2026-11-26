@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../services/api';
 import {
   Upload,
@@ -26,6 +27,8 @@ export const EnergyMonitoring: React.FC = () => {
   const [readings, setReadings] = useState<any[]>([]);
   const [buildings, setBuildings] = useState<any[]>([]);
   const [selectedBuilding, setSelectedBuilding] = useState<string>('');
+  const [selectedSource, setSelectedSource] = useState<string>('all');
+  const [dataSources, setDataSources] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Upload modal state
@@ -38,18 +41,23 @@ export const EnergyMonitoring: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, [selectedBuilding]);
+  }, [selectedBuilding, selectedSource]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const bParam = selectedBuilding ? `?buildingId=${selectedBuilding}` : '';
-      const [readingsRes, bldgsRes] = await Promise.all([
-        api.get(`/energy/readings${bParam}`),
+      const params = new URLSearchParams();
+      if (selectedBuilding) params.set('buildingId', selectedBuilding);
+      if (selectedSource !== 'all') params.set('dataSource', selectedSource);
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const [readingsRes, bldgsRes, sourcesRes] = await Promise.all([
+        api.get(`/energy/readings${query}`),
         api.get('/buildings'),
+        api.get('/energy/sources'),
       ]);
       setReadings(readingsRes.data.readings || []);
       setBuildings(bldgsRes.data.buildings || []);
+      setDataSources(sourcesRes.data.sources || []);
     } catch (err) {
       console.error('Failed to load readings:', err);
     } finally {
@@ -120,17 +128,7 @@ export const EnergyMonitoring: React.FC = () => {
             <span>Sample CSV</span>
           </a>
 
-          <button
-            onClick={() => {
-              setIsUploadOpen(true);
-              setUploadStatus(null);
-              setPreviewData(null);
-            }}
-            className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition-colors shadow-sm"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Upload Energy CSV</span>
-          </button>
+          <Link to="/imports" className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition-colors shadow-sm"><Upload className="w-3.5 h-3.5" /><span>Import a dataset</span></Link>
         </div>
       </div>
 
@@ -151,6 +149,10 @@ export const EnergyMonitoring: React.FC = () => {
               </option>
             ))}
           </select>
+          <select value={selectedSource} onChange={(e) => setSelectedSource(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200">
+            <option value="all">All data sources</option>
+            {dataSources.map((source) => <option key={source} value={source}>{source === 'SYNTHETIC_DEMO' ? 'ABC University demo' : source}</option>)}
+          </select>
         </div>
 
         <div className="text-xs text-slate-400">
@@ -166,7 +168,7 @@ export const EnergyMonitoring: React.FC = () => {
             <span>Meter Readings Telemetry Log</span>
           </h3>
           <span className="text-[11px] bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-full font-mono">
-            Granularity: Hourly (kWh)
+            Source-provided intervals
           </span>
         </div>
 
@@ -192,7 +194,7 @@ export const EnergyMonitoring: React.FC = () => {
                   <td className="px-4 py-2.5 font-sans font-medium text-white">{r.building?.name}</td>
                   <td className="px-4 py-2.5 text-slate-400 font-sans">{r.meter?.meterName || 'Main Feeder'}</td>
                   <td className="px-4 py-2.5 text-emerald-400 font-bold">{r.consumptionKwh.toFixed(1)}</td>
-                  <td className="px-4 py-2.5 text-slate-300">{(r.powerKw || r.consumptionKwh).toFixed(1)}</td>
+                  <td className="px-4 py-2.5 text-slate-300">{r.powerKw == null ? '—' : r.powerKw.toFixed(1)}</td>
                   <td className="px-4 py-2.5 font-sans">
                     <span className="inline-flex items-center space-x-1 bg-emerald-500/10 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded">
                       <CheckCircle2 className="w-3 h-3" />

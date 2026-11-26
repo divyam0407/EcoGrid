@@ -5,17 +5,17 @@ class HistoricalReading(BaseModel):
     timestamp: str  # ISO 8601 string
     consumption_kwh: float
     power_kw: Optional[float] = None
-    temperature_c: Optional[float] = 22.0
-    is_holiday: Optional[bool] = False
-    scheduled_occupancy: Optional[int] = 0
-    scheduled_classes: Optional[int] = 0
+    temperature_c: Optional[float] = None
+    is_holiday: Optional[bool] = None
+    scheduled_occupancy: Optional[int] = None
+    scheduled_classes: Optional[int] = None
 
 class OperationalFeature(BaseModel):
     timestamp: str
-    scheduled_classes: int = 0
-    scheduled_occupancy: int = 0
-    is_holiday: bool = False
-    temperature_c: Optional[float] = 22.0
+    scheduled_classes: Optional[int] = None
+    scheduled_occupancy: Optional[int] = None
+    is_holiday: Optional[bool] = None
+    temperature_c: Optional[float] = None
 
 class ForecastRequest(BaseModel):
     building_id: Optional[str] = "all"
@@ -33,9 +33,9 @@ class ForecastPoint(BaseModel):
     factors: Dict[str, Any] = {}
 
 class ForecastMetrics(BaseModel):
-    mae: float
-    rmse: float
-    mape: float
+    mae: Optional[float]
+    rmse: Optional[float]
+    mape: Optional[float]
     train_size: int
     test_size: int
 
