@@ -13,16 +13,18 @@ EcoGrid can be deployed either locally for development or as containerized servi
 
 1. **Install Python Intelligence Dependencies:**
    ```bash
-   pip install -r intelligence/requirements.txt
+   python3 -m pip install -r intelligence/requirements.txt
    ```
 
 2. **Configure and start PostgreSQL:**
    ```bash
+   # Only if no root .env already exists; never overwrite local configuration.
    cp .env.example .env
    docker compose up -d db
    ```
 
-   A locally installed PostgreSQL service can be used instead. The host-run
+   Choose either the Docker database or a locally installed PostgreSQL service;
+   do not start both on port 5432 unless you change the Compose host port. The host-run
    backend reads `backend/.env`; configure its PostgreSQL `DATABASE_URL` there.
    Do not replace a populated backend `.env` with the example file. For Compose,
    the root `.env` supplies `POSTGRES_*`, `JWT_SECRET`, and
@@ -30,9 +32,9 @@ EcoGrid can be deployed either locally for development or as containerized servi
    local password before starting Compose, and use managed secrets outside
    local development.
 
-3. **Apply migrations and start the intelligence service:**
+3. **Start the intelligence service:**
    ```bash
-   python -m uvicorn intelligence.app.main:app --host 127.0.0.1 --port 8000
+   npm run dev:intelligence
    ```
 
 4. **Install backend dependencies and start Express:**
@@ -44,12 +46,18 @@ EcoGrid can be deployed either locally for development or as containerized servi
    npm run dev
    ```
 
-   The current PostgreSQL database has the applied schema and migrated ABC
-   University demo records. The original `backend/prisma/dev.db` remains
-   unchanged, with a verified backup retained under `backend/prisma/backups/`.
-   `migrate deploy` is repeatable and applies only pending migrations.
+   `ecogrid_db` contains migrated ABC University demo records, but its current
+   Prisma status has three pending migrations: `20261128000000_a9_optimization_configuration`,
+   `20261128001000_require_explicit_tariff_price`, and
+   `20261129000000_a10_saas_foundation`. Do not apply them as part of local
+   startup. The app's A9/A10 APIs may fail against this database until that
+   migration is separately approved and verified. The isolated `ecogrid_a10_test`
+   database has the complete 15-migration chain but contains test data, not the
+   ABC demo records. The original SQLite database has not been changed in this
+   workflow. `migrate deploy` is repeatable but will apply pending migrations to
+   whichever database `DATABASE_URL` selects, so verify the target before use.
 
-5. **Start the frontend:**
+6. **Start the frontend:**
    ```bash
    cd ../frontend
    npm install
@@ -57,7 +65,7 @@ EcoGrid can be deployed either locally for development or as containerized servi
    # Runs on http://localhost:5173
    ```
 
-5. **Create the first organization:**
+7. **Create the first organization:**
    - Open `http://localhost:5173/register` and create an account with a unique
      email address and a 12-character-or-longer password.
    - This creates an organization and a trial subscription. No payment is

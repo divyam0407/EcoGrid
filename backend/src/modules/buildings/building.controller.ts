@@ -47,8 +47,8 @@ export const createBuilding = async (req: Request, res: Response) => {
 export const getBuildingById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const building = await prisma.building.findUnique({
-      where: { id },
+    const building = await prisma.building.findFirst({
+      where: { id, organizationId: req.user?.organizationId },
       include: {
         departments: { include: { rooms: true } },
         rooms: { include: { meters: true } },
@@ -68,8 +68,8 @@ export const updateBuilding = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { name, buildingType, address, totalArea } = req.body;
-    const building = await prisma.building.update({
-      where: { id },
+    const result = await prisma.building.updateMany({
+      where: { id, organizationId: req.user?.organizationId },
       data: {
         name,
         buildingType,
@@ -77,6 +77,8 @@ export const updateBuilding = async (req: Request, res: Response) => {
         totalArea: totalArea ? parseFloat(totalArea) : undefined
       }
     });
+    if (!result.count) return res.status(404).json({ error: 'Building not found' });
+    const building = await prisma.building.findFirst({ where: { id, organizationId: req.user?.organizationId } });
     return res.json({ building });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
@@ -86,9 +88,31 @@ export const updateBuilding = async (req: Request, res: Response) => {
 export const deleteBuilding = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    await prisma.building.delete({ where: { id } });
+    const result = await prisma.building.deleteMany({ where: { id, organizationId: req.user?.organizationId } });
+    if (!result.count) return res.status(404).json({ error: 'Building not found' });
     return res.json({ message: 'Building deleted successfully' });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
+  }
+};
+
+export const createBuildingMeter = async (req: Request, res: Response) => {
+  try {
+    const organizationId = req.user?.organizationId;
+    const buildingId = req.params.id;
+    const meterName = typeof req.body.meterName === 'string' ? req.body.meterName.trim() : '';
+    const meterType = typeof req.body.meterType === 'string' ? req.body.meterType : 'MAIN_FEEDER';
+    const meterTypes = ['MAIN_FEEDER', 'SUB_METER', 'HVAC', 'LIGHTING', 'PLUG_LOAD'];
+    if (!meterName || meterName.length > 120 || !meterTypes.includes(meterType)) {
+      return res.status(400).json({ error: 'Enter a meter name and supported meter type.' });
+    }
+    const building = await prisma.building.findFirst({ where: { id: buildingId, organizationId }, select: { id: true } });
+    if (!building) return res.status(404).json({ error: 'Building not found.' });
+    const meter = await prisma.meter.create({ data: {
+      organizationId: organizationId!, buildingId, meterName, meterType, dataSource: 'UNSPECIFIED',
+    } });
+    return res.status(201).json({ meter });
+  } catch {
+    return res.status(500).json({ error: 'Meter could not be created.' });
   }
 };

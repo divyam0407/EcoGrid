@@ -103,7 +103,8 @@ export const SolarManagement: React.FC = () => {
           </div>
         </div>
 
-        <div className="h-72 w-full">
+        <div className="h-64 w-full sm:h-72">
+          {loading ? <div className="h-full animate-pulse rounded-lg bg-slate-800/40" aria-label="Loading solar readings" /> : !solarData?.recentReadings?.length ? <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-700 px-5 text-center"><SunMedium className="mb-3 h-7 w-7 text-slate-500"/><p className="text-sm font-medium text-slate-300">No solar readings available</p><p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">Configure an installation and record generation readings to see this profile.</p></div> :
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={[...(solarData?.recentReadings || [])].reverse()} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
               <defs>
@@ -112,13 +113,14 @@ export const SolarManagement: React.FC = () => {
                   <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="timestamp" stroke="#64748b" tickFormatter={(t) => t.slice(11, 16)} tick={{ fontSize: 10 }} />
-              <YAxis stroke="#64748b" tick={{ fontSize: 10 }} />
-              <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#26364b" />
+              <XAxis dataKey="timestamp" stroke="#718096" tickFormatter={(t) => { const date = new Date(t); return Number.isNaN(date.getTime()) ? t : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }} tick={{ fontSize: 10 }} />
+              <YAxis stroke="#718096" tick={{ fontSize: 10 }} tickFormatter={(value) => Number(value).toLocaleString()} />
+              <Tooltip contentStyle={{ backgroundColor: '#111b2b', border: '1px solid #334155', borderRadius: '10px', fontSize: '12px' }} formatter={(value: any) => [`${Number(value).toLocaleString()} kWh`, 'Generation']} />
               <Area type="monotone" dataKey="generationKwh" stroke="#f59e0b" fillOpacity={1} fill="url(#solarGrad)" name="Generation (kWh)" />
             </AreaChart>
           </ResponsiveContainer>
+          }
         </div>
       </div>
       {!loading && !solarData?.totalInstallations && <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-sm text-slate-400">No solar installations are configured for this organization. Solar generation and self-consumption metrics are unavailable.</div>}

@@ -8,6 +8,7 @@ import { login, logout, refresh, register, switchOrganization, updatePlatformAcc
 import { acceptInvitationForNewUser, changeMemberRole, createOrganizationInvitation, deactivateOrganizationMember } from '../organizations/membership.controller';
 import { getOrganizationSubscription } from '../organizations/subscription.controller';
 import { getUsage, requireEntitlement } from '../organizations/subscription.service';
+import { createBuildingMeter, deleteBuilding, getBuildingById, updateBuilding } from '../buildings/building.controller';
 
 const url = process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL) : null;
 if (!url || url.hostname !== '127.0.0.1' || url.pathname.replace(/^\//, '') !== 'ecogrid_a10_test') {
@@ -97,6 +98,25 @@ test('read-only members cannot invoke energy-manager operations', async () => {
     { status(code: number) { status = code; return this; }, json() { return this; } } as any, () => { nextCalled = true; });
   assert.equal(status, 403);
   assert.equal(nextCalled, false);
+});
+
+test('building access is organization-scoped and meters can only be mapped to owned buildings', async () => {
+  const building = await prisma.building.create({ data: { organizationId, name: 'Import setup building' } });
+  const foreignRead = await invoke(getBuildingById, { params: { id: building.id }, user: { organizationId: otherOrganizationId } });
+  assert.equal(foreignRead.status, 404);
+  const foreignUpdate = await invoke(updateBuilding, { params: { id: building.id }, user: { organizationId: otherOrganizationId }, body: { name: 'Hijacked' } });
+  assert.equal(foreignUpdate.status, 404);
+  const foreignDelete = await invoke(deleteBuilding, { params: { id: building.id }, user: { organizationId: otherOrganizationId } });
+  assert.equal(foreignDelete.status, 404);
+  assert.equal((await prisma.building.findUniqueOrThrow({ where: { id: building.id } })).name, 'Import setup building');
+
+  const created = await invoke(createBuildingMeter, { params: { id: building.id }, user: { organizationId }, body: { meterName: 'Main meter', meterType: 'MAIN_FEEDER' } });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.meter.organizationId, organizationId);
+  const foreignMeter = await invoke(createBuildingMeter, { params: { id: building.id }, user: { organizationId: otherOrganizationId }, body: { meterName: 'Foreign meter' } });
+  assert.equal(foreignMeter.status, 404);
+  assert.equal(await prisma.meter.count({ where: { buildingId: building.id } }), 1);
+  await prisma.building.delete({ where: { id: building.id } });
 });
 
 test('organization switching and access checks enforce membership and current database role', async () => {

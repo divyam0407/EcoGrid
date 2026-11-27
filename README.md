@@ -29,9 +29,8 @@ EcoGrid is an operational energy intelligence and mathematical optimization plat
 
 ### 2. Start Intelligence Service
 ```bash
-cd intelligence
-pip install -r requirements.txt
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python3 -m pip install -r intelligence/requirements.txt
+npm run dev:intelligence
 ```
 *(Intelligence Service health check available at `http://localhost:8000/health`)*
 
@@ -52,12 +51,26 @@ for equations, limits, APIs, and rollout requirements.
 ```bash
 cd backend
 npm install
-# Create an empty PostgreSQL database and configure DATABASE_URL in backend/.env.
+npx prisma validate
 npx prisma generate
-npm run prisma:migrate:deploy
+npm run prisma:migrate:status
+# Do not run migrate deploy against the existing ecogrid_db without approval.
 npm run dev
 ```
-Use the same PostgreSQL deployment process in development and production. Do not run `prisma db push`, `prisma migrate reset`, or the demo seed against an existing database. The legacy SQLite demo database is retained as a read-only migration source; it is not an application datasource.
+The local `ecogrid_db` contains ABC University demo records and has three pending
+migrations: two A9 migrations and the A10 SaaS foundation migration. The current
+code expects the new schema, so some A9/A10 API workflows will not work against
+that database until the changes are reviewed, backed up, and applied separately.
+Do not run `prisma migrate deploy`, `prisma db push`, `prisma migrate reset`, or
+the demo seed against `ecogrid_db` as part of quick start. For integration tests,
+use the isolated databases and runners described in the deployment guide. For a
+new empty local database, verify its identity with `prisma migrate status` before
+running `prisma migrate deploy`. The original SQLite file remains untouched and
+is not an application datasource.
+
+To run the reproducible synthetic ABC University campus demo, use the guarded
+`ecogrid_demo` workflow in [`docs/demo-data.md`](docs/demo-data.md); it never
+targets `ecogrid_db` or the legacy SQLite demo.
 
 ### 4. Start React Frontend
 ```bash

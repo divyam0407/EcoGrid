@@ -208,8 +208,8 @@ export const DemandForecasting: React.FC = () => {
         <div className="mt-3 flex gap-6 text-xs text-slate-300"><span>Compared intervals: <b>{monitoring?.metrics?.n ?? '—'}</b></span><span>MAE: <b>{monitoring?.metrics?.mae?.toFixed?.(2) ?? '—'} kWh</b></span><span>RMSE: <b>{monitoring?.metrics?.rmse?.toFixed?.(2) ?? '—'} kWh</b></span><span>WAPE: <b>{monitoring?.metrics?.wape?.toFixed?.(1) ?? '—'}%</b></span></div>
         <div className="mt-4 h-56">
           {forecastHistory.some((point) => point.actualKwh != null) ? <ResponsiveContainer width="100%" height="100%"><LineChart data={forecastHistory.filter((point) => point.actualKwh != null)}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" /><XAxis dataKey="forecastTimestamp" tickFormatter={(v) => new Date(v).toLocaleDateString()} stroke="#64748b" tick={{ fontSize: 10 }} />
-            <YAxis stroke="#64748b" tick={{ fontSize: 10 }} /><Tooltip labelFormatter={(v) => new Date(v).toLocaleString()} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#26364b" /><XAxis dataKey="forecastTimestamp" tickFormatter={(v) => new Date(v).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} stroke="#718096" tick={{ fontSize: 10 }} />
+            <YAxis stroke="#718096" tick={{ fontSize: 10 }} tickFormatter={(value) => Number(value).toLocaleString()} /><Tooltip contentStyle={{ backgroundColor: '#111b2b', border: '1px solid #334155', borderRadius: '10px', fontSize: '12px' }} labelFormatter={(v) => new Date(v).toLocaleString()} formatter={(value: any, name: string) => [`${Number(value).toLocaleString()} kWh`, name]} />
             <Legend /><Line dataKey="predictedKwh" name="Predicted kWh" stroke="#10b981" dot={false} /><Line dataKey="actualKwh" name="Actual kWh" stroke="#38bdf8" dot={false} />
           </LineChart></ResponsiveContainer> : <div className="h-full flex items-center justify-center text-xs text-slate-500">Forecasts will appear here once matching actual readings arrive.</div>}
         </div>
@@ -297,14 +297,14 @@ export const DemandForecasting: React.FC = () => {
                   <stop offset="95%" stopColor="#14b8a6" stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#26364b" />
               <XAxis
                 dataKey="timestamp"
                 stroke="#64748b"
-                tickFormatter={(t) => t.slice(11, 16)}
+                tickFormatter={(t) => { const date = new Date(t); return Number.isNaN(date.getTime()) ? t : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }); }}
                 tick={{ fontSize: 10 }}
               />
-              <YAxis stroke="#64748b" tick={{ fontSize: 10 }} />
+              <YAxis stroke="#718096" tick={{ fontSize: 10 }} tickFormatter={(value) => Number(value).toLocaleString()} />
               <Tooltip
                 contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
                 formatter={(val: any) => [`${val} kW`, 'Demand']}

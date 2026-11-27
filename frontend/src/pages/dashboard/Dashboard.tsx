@@ -48,6 +48,7 @@ export const Dashboard: React.FC = () => {
   const [dataSources, setDataSources] = useState<string[]>([]);
   const [selectedSource, setSelectedSource] = useState('all');
   const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState('');
   const [selectedBuilding, setSelectedBuilding] = useState<string>('all');
   const [timeRange, setTimeRange] = useState<string>('all');
 
@@ -57,6 +58,7 @@ export const Dashboard: React.FC = () => {
 
   const fetchDashboardData = async () => {
     setLoading(true);
+    setError('');
     try {
       const filters = new URLSearchParams();
       if (selectedBuilding !== 'all') filters.set('buildingId', selectedBuilding);
@@ -75,6 +77,7 @@ export const Dashboard: React.FC = () => {
       setDataSources(sourcesRes.data.sources || []);
     } catch (err) {
       console.error('Error fetching dashboard telemetry:', err);
+      setError('Campus energy data could not be loaded. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -83,7 +86,7 @@ export const Dashboard: React.FC = () => {
   const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6'];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -94,15 +97,16 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Global Dashboard Filters */}
-        <div className="flex items-center space-x-2.5">
-          <select value={selectedSource} onChange={(e) => setSelectedSource(e.target.value)} className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200">
+        <div className="grid w-full grid-cols-1 gap-2 sm:w-auto sm:grid-cols-3 sm:gap-3">
+          <label className="min-w-0 text-[10px] font-medium uppercase tracking-wide text-slate-500">Data source<select aria-label="Filter by data source" value={selectedSource} onChange={(e) => setSelectedSource(e.target.value)} className="mt-1 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200">
             <option value="all">All data sources</option>
             {dataSources.map((source) => <option key={source} value={source}>{sourceLabel(source)}</option>)}
-          </select>
-          <select
+          </select></label>
+          <label className="min-w-0 text-[10px] font-medium uppercase tracking-wide text-slate-500">Building<select
+            aria-label="Filter by building"
             value={selectedBuilding}
             onChange={(e) => setSelectedBuilding(e.target.value)}
-            className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+            className="mt-1 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
           >
             <option value="all">All Campus Buildings</option>
             {buildingComp.map((b) => (
@@ -110,25 +114,28 @@ export const Dashboard: React.FC = () => {
                 {b.buildingName}
               </option>
             ))}
-          </select>
+          </select></label>
 
-          <select
+          <label className="min-w-0 text-[10px] font-medium uppercase tracking-wide text-slate-500">Time period<select
+            aria-label="Filter by time period"
             value={timeRange}
             onChange={(e) => setTimeRange(e.target.value)}
-            className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+            className="mt-1 w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
           >
             <option value="7">Last 7 Days</option>
             <option value="30">Last 30 Days</option>
             <option value="60">Last 60 Days</option>
             <option value="all">All Available History</option>
-          </select>
+          </select></label>
         </div>
       </div>
 
+      {error && <div role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
+
       {/* Primary KPI Grid (PRD Module 4) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3.5">
+      <div className="grid grid-cols-1 min-[430px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         {/* Card 1: Total Consumption */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+        <div className="bg-slate-900/90 border border-slate-800 p-4 sm:p-5 rounded-2xl">
           <div className="flex items-center justify-between text-slate-400 mb-2">
             <span className="text-[11px] font-medium uppercase tracking-wider">Total Consumed</span>
             <Activity className="w-4 h-4 text-emerald-400" />
@@ -143,7 +150,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Card 2: Peak Demand */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+        <div className="bg-slate-900/90 border border-slate-800 p-4 sm:p-5 rounded-2xl">
           <div className="flex items-center justify-between text-slate-400 mb-2">
             <span className="text-[11px] font-medium uppercase tracking-wider">Peak Demand</span>
             <Zap className="w-4 h-4 text-amber-400" />
@@ -155,7 +162,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Card 3: Electricity Expenditure */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+        <div className="bg-slate-900/90 border border-slate-800 p-4 sm:p-5 rounded-2xl">
           <div className="flex items-center justify-between text-slate-400 mb-2">
             <span className="text-[11px] font-medium uppercase tracking-wider">Expenditure</span>
             <DollarSign className="w-4 h-4 text-blue-400" />
@@ -167,7 +174,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Card 4: Solar Generation */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
+        <div className="bg-slate-900/90 border border-slate-800 p-4 sm:p-5 rounded-2xl">
           <div className="flex items-center justify-between text-slate-400 mb-2">
             <span className="text-[11px] font-medium uppercase tracking-wider">Solar Generated</span>
             <SunMedium className="w-4 h-4 text-amber-400" />
@@ -179,7 +186,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Card 5: Potential Savings */}
-        <div className="bg-slate-900 border border-emerald-500/30 bg-emerald-950/10 p-4 rounded-xl">
+        <div className="bg-emerald-950/20 border border-emerald-500/25 p-4 sm:p-5 rounded-2xl">
           <div className="flex items-center justify-between text-emerald-400 mb-2">
             <span className="text-[11px] font-medium uppercase tracking-wider">Identified Savings</span>
             <Lightbulb className="w-4 h-4 text-emerald-400" />
@@ -233,7 +240,7 @@ export const Dashboard: React.FC = () => {
       {/* Main Charts: Consumption vs Solar Trend (AreaChart) & Building Comparison (BarChart) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Energy Profile Trend */}
-        <div className="lg:col-span-2 bg-slate-900 border border-slate-800 p-5 rounded-xl">
+        <div className="lg:col-span-2 bg-slate-900/90 border border-slate-800 p-5 sm:p-6 rounded-2xl">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-sm font-bold text-white">Daily Consumption & Solar Generation Profile</h3>
@@ -251,7 +258,8 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="h-72 w-full">
+          <div className="h-64 sm:h-72 w-full">
+            {loading ? <div className="h-full animate-pulse rounded-lg bg-slate-800/40" aria-label="Loading energy trend" /> : trends.length === 0 ? <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-700/80 px-5 text-center"><Activity className="mb-3 h-7 w-7 text-slate-500"/><p className="text-sm font-medium text-slate-300">No measured energy for this selection</p><p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">Import readings for a campus meter to see the energy trend. Forecasts and estimates are not included here.</p><Link to="/imports" className="mt-3 text-xs font-semibold text-emerald-300 hover:text-emerald-200">Open dataset imports <span aria-hidden="true">→</span></Link></div> :
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={trends} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <defs>
@@ -265,26 +273,29 @@ export const Dashboard: React.FC = () => {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="timestamp" stroke="#64748b" tick={{ fontSize: 10 }} />
-                <YAxis stroke="#64748b" tick={{ fontSize: 10 }} />
+                <XAxis dataKey="timestamp" stroke="#64748b" tick={{ fontSize: 10 }} tickFormatter={(value) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }} />
+                <YAxis stroke="#64748b" tick={{ fontSize: 10 }} tickFormatter={(value) => Number(value).toLocaleString()} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
+                  contentStyle={{ backgroundColor: '#111b2b', borderColor: '#334155', borderRadius: '10px', fontSize: '12px' }}
+                  formatter={(value: any, name: string) => [`${Number(value).toLocaleString()} kWh`, name]}
                 />
                 <Area type="monotone" dataKey="consumptionKwh" stroke="#10b981" fillOpacity={1} fill="url(#colorCons)" name="Load (kWh)" />
                 <Area type="monotone" dataKey="solarKwh" stroke="#f59e0b" fillOpacity={1} fill="url(#colorSolar)" name="Solar (kWh)" />
               </AreaChart>
             </ResponsiveContainer>
+            }
           </div>
         </div>
 
         {/* Right: Building-Wise Share Pie Chart */}
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl flex flex-col justify-between">
+        <div className="bg-slate-900/90 border border-slate-800 p-5 sm:p-6 rounded-2xl flex flex-col justify-between">
           <div>
             <h3 className="text-sm font-bold text-white mb-1">Building Consumption Distribution</h3>
             <p className="text-[11px] text-slate-400 mb-3">Facility share across campus infrastructure</p>
           </div>
 
           <div className="h-56 w-full">
+            {loading ? <div className="h-full animate-pulse rounded-lg bg-slate-800/40" aria-label="Loading building comparison" /> : buildingComp.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><Building className="mb-2 h-7 w-7 text-slate-500"/><p className="text-xs font-medium text-slate-300">Building comparison unavailable</p><p className="mt-1 max-w-56 text-[11px] leading-4 text-slate-500">There are no measured readings for the selected source yet.</p></div> :
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
@@ -302,10 +313,12 @@ export const Dashboard: React.FC = () => {
                   ))}
                 </Pie>
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', fontSize: '11px' }}
+                  contentStyle={{ backgroundColor: '#111b2b', borderColor: '#334155', borderRadius: '10px', fontSize: '12px' }}
+                  formatter={(value: any) => [`${Number(value).toLocaleString()} kWh`, 'Consumption']}
                 />
               </PieChart>
             </ResponsiveContainer>
+            }
           </div>
 
           <div className="space-y-1.5 mt-2">

@@ -31,6 +31,9 @@ export const Settings: React.FC = () => {
   const [newBldgName, setNewBldgName] = useState('');
   const [newBldgType, setNewBldgType] = useState('ACADEMIC');
   const [newBldgArea, setNewBldgArea] = useState('');
+  const [newMeterNames, setNewMeterNames] = useState<Record<string, string>>({});
+  const [newMeterTypes, setNewMeterTypes] = useState<Record<string, string>>({});
+  const [meterMessages, setMeterMessages] = useState<Record<string, string>>({});
 
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [tariffEditor, setTariffEditor] = useState<any>({ tariffName: '', tariffType: 'FLAT', pricePerKwh: '', demandChargePerKw: '', demandWindowMinutes: 60, allowGridExport: false, exportPricePerKwh: '', fixedCharge: '', carbonEmissionKgPerKwh: '', periods: [] as any[] });
@@ -44,6 +47,7 @@ export const Settings: React.FC = () => {
   const [subscription, setSubscription] = useState<any>(null);
   const [subscriptionMessage, setSubscriptionMessage] = useState('');
   const isOrgAdmin = ['ORG_ADMIN', 'SUPER_ADMIN'].includes(user?.role || '');
+  const canManageInfrastructure = ['ORG_ADMIN', 'ENERGY_MANAGER', 'FACILITY_MANAGER', 'SUPER_ADMIN'].includes(user?.role || '');
 
   useEffect(() => {
     fetchBuildings();
@@ -177,6 +181,21 @@ export const Settings: React.FC = () => {
     }
   };
 
+  const handleAddMeter = async (event: React.FormEvent, buildingId: string) => {
+    event.preventDefault();
+    const meterName = (newMeterNames[buildingId] || '').trim();
+    if (!meterName) return;
+    setMeterMessages((messages) => ({ ...messages, [buildingId]: '' }));
+    try {
+      await api.post(`/buildings/${buildingId}/meters`, { meterName, meterType: newMeterTypes[buildingId] || 'MAIN_FEEDER' });
+      setNewMeterNames((names) => ({ ...names, [buildingId]: '' }));
+      setMeterMessages((messages) => ({ ...messages, [buildingId]: 'Meter added. Select it in Dataset Imports to map source readings.' }));
+      await fetchBuildings();
+    } catch (err: any) {
+      setMeterMessages((messages) => ({ ...messages, [buildingId]: err.response?.data?.error || 'Meter could not be added.' }));
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -188,10 +207,11 @@ export const Settings: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex space-x-2 border-b border-slate-800 pb-2">
+      <nav aria-label="Organization settings" className="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
         <button
+          aria-pressed={activeTab === 'profile'}
           onClick={() => setActiveTab('profile')}
-          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+          className={`flex min-h-10 items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
             activeTab === 'profile'
               ? 'bg-emerald-600 text-white'
               : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -202,8 +222,9 @@ export const Settings: React.FC = () => {
         </button>
 
         <button
+          aria-pressed={activeTab === 'buildings'}
           onClick={() => setActiveTab('buildings')}
-          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+          className={`flex min-h-10 items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
             activeTab === 'buildings'
               ? 'bg-emerald-600 text-white'
               : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -214,8 +235,9 @@ export const Settings: React.FC = () => {
         </button>
 
         <button
+          aria-pressed={activeTab === 'tariffs'}
           onClick={() => setActiveTab('tariffs')}
-          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+          className={`flex min-h-10 items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
             activeTab === 'tariffs'
               ? 'bg-emerald-600 text-white'
               : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -225,16 +247,16 @@ export const Settings: React.FC = () => {
           <span>Electricity Tariffs</span>
         </button>
 
-        <button onClick={() => setActiveTab('members')}
-          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'members' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+        <button aria-pressed={activeTab === 'members'} onClick={() => setActiveTab('members')}
+          className={`flex min-h-10 items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'members' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
           <Users className="w-4 h-4" /><span>Users & Roles</span>
         </button>
 
-        <button onClick={() => setActiveTab('subscription')}
-          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'subscription' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+        <button aria-pressed={activeTab === 'subscription'} onClick={() => setActiveTab('subscription')}
+          className={`flex min-h-10 items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'subscription' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
           <DollarSign className="w-4 h-4" /><span>Plan & Usage</span>
         </button>
-      </div>
+      </nav>
 
       {/* Tab 1: Profile */}
       {activeTab === 'profile' && (
@@ -316,7 +338,7 @@ export const Settings: React.FC = () => {
             <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-3">
               Register New Building / Facility
             </h3>
-            <form onSubmit={handleAddBuilding} className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+            {canManageInfrastructure && <form onSubmit={handleAddBuilding} className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
               <div>
                 <input
                   type="text"
@@ -358,7 +380,7 @@ export const Settings: React.FC = () => {
                   <span>Add Building</span>
                 </button>
               </div>
-            </form>
+            </form>}
           </div>
 
           {/* Buildings List */}
@@ -376,9 +398,25 @@ export const Settings: React.FC = () => {
                 </div>
                 <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-800">
                   <span>{b.rooms?.length || 0} Sub-Rooms</span>
-                  <span>{b.meters?.length || 1} Meters</span>
+                  <span>{b.meters?.length || 0} Meters</span>
                   <span>{b.solar?.length ? 'Solar Active' : 'No Solar'}</span>
                 </div>
+                {b.meters?.length > 0 && <ul className="space-y-1 text-[11px] text-slate-400">
+                  {b.meters.map((meter: any) => <li key={meter.id}>{meter.meterName} · {meter.meterType}</li>)}
+                </ul>}
+                {canManageInfrastructure && <form onSubmit={(event) => void handleAddMeter(event, b.id)} className="grid grid-cols-[1fr_auto] gap-2 border-t border-slate-800 pt-3">
+                  <input aria-label={`Meter name for ${b.name}`} required maxLength={120} value={newMeterNames[b.id] || ''}
+                    onChange={(event) => setNewMeterNames((names) => ({ ...names, [b.id]: event.target.value }))}
+                    placeholder="Meter name" className="min-w-0 rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" />
+                  <select aria-label={`Meter type for ${b.name}`} value={newMeterTypes[b.id] || 'MAIN_FEEDER'}
+                    onChange={(event) => setNewMeterTypes((types) => ({ ...types, [b.id]: event.target.value }))}
+                    className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white">
+                    <option value="MAIN_FEEDER">Main feeder</option><option value="SUB_METER">Sub-meter</option>
+                    <option value="HVAC">HVAC</option><option value="LIGHTING">Lighting</option><option value="PLUG_LOAD">Plug load</option>
+                  </select>
+                  <button type="submit" className="col-span-2 rounded-lg bg-slate-800 px-3 py-2 text-xs text-emerald-300 hover:bg-slate-700">Add meter</button>
+                  {meterMessages[b.id] && <p role="status" className="col-span-2 text-[11px] text-emerald-300">{meterMessages[b.id]}</p>}
+                </form>}
               </div>
             ))}
           </div>

@@ -1,0 +1,23 @@
+{
+  "dataset": "ABC University Synthetic Campus Demonstration",
+  "datasetVersion": "ecogrid-campus-synthetic-v1",
+  "generatedAt": "2026-11-27T12:26:29.731Z",
+  "synthetic": true,
+  "license": "Fictional synthetic data; no third-party license or source",
+  "sourceUrl": null,
+  "timezone": "America/New_York",
+  "timeRangeUtc": {
+    "start": "2026-08-29T12:00:00.000Z",
+    "end": "2026-11-27T12:00:00.000Z"
+  },
+  "interval": "PT1H",
+  "energyUnit": "kWh per interval",
+  "solarUnit": "kWh per interval",
+  "randomSeed": 20261127,
+  "assumptions": {
+    "tariff": "Illustrative USD 0.15/kWh import and USD 0.04/kWh export; not an actual utility tariff.",
+    "solar": "Illustrative 120 kW rooftop system; generated profile is synthetic and not weather-derived.",
+    "battery": "Illustrative 200 kWh battery; 50 kW charge/discharge limits; 94% efficiencies; SOC 20–190 kWh; grid charging disabled.",
+    "occupancy": "No observed or estimated occupancy records are created. Schedule headcounts are expectations only."
+  }
+}

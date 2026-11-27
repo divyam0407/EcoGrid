@@ -2,14 +2,71 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  body {
-    @apply bg-slate-900 text-slate-100 antialiased min-h-screen font-sans;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  }
+:root {
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --app-bg: #0b1220;
+  --surface: #111b2b;
+  --surface-raised: #162235;
+  --line: #26364b;
+  --muted: #9aa9bd;
+  --accent: #34d399;
 }
 
-/* Custom modern scrollbars */
+@layer base {
+  body {
+    @apply text-slate-100 antialiased min-h-screen font-sans;
+    background: var(--app-bg);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  button, input, select, textarea { font: inherit; }
+  button:focus-visible, a:focus-visible, input:focus-visible,
+  select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  button:disabled { cursor: not-allowed; }
+}
+
+/* Shared workspace rhythm and controls */
+main { max-width: 1760px; width: 100%; margin-inline: auto; }
+main h1 {
+  color: #f1f5f9;
+  font-size: clamp(1.35rem, 1.8vw, 1.7rem);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: 1.2;
+}
+main h1 + p {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.55;
+  margin-top: 0.4rem;
+  max-width: 72ch;
+}
+main section[class*="rounded-xl"][class*="border"][class*="bg-slate-900"] {
+  border-color: var(--line);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+main :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea) {
+  min-height: 2.5rem;
+  border-color: var(--line);
+}
+main :is(input, select, textarea)::placeholder { color: #718096; }
+main table { border-collapse: separate; border-spacing: 0; }
+main thead th { font-weight: 600; letter-spacing: 0.045em; }
+main tbody tr { transition: background-color 120ms ease; }
+main tbody tr:hover { background-color: rgb(148 163 184 / 0.045); }
+main a { text-underline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

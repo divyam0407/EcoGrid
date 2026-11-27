@@ -262,7 +262,7 @@ export const getEnergySummary = async (req: Request, res: Response) => {
       orderBy: { timestamp: 'asc' },
     });
 
-    const solarReadings = dataSource && dataSource !== 'SYNTHETIC_DEMO'
+    const solarReadings = dataSource && dataSource !== 'all' && dataSource !== 'SYNTHETIC_DEMO'
       ? []
       : await prisma.solarReading.findMany({
         where: {
