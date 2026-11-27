@@ -12,6 +12,8 @@ interface User {
     industryType: string;
     currency: string;
     timezone: string;
+    tier?: string;
+    isBenchmark?: boolean;
   };
   organizations?: Array<{
     id: string;
@@ -27,7 +29,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string, orgName: string, industryType?: string) => Promise<void>;
-  demoLogin: (role?: 'ADMIN' | 'ENERGY_MANAGER') => Promise<void>;
+  switchOrganization: (organizationId: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -45,6 +47,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const res = await api.get('/auth/me');
           setUser(res.data.user);
+          setToken(localStorage.getItem('ecogrid_token'));
         } catch (err) {
           console.warn('Failed to verify existing session:', err);
           localStorage.removeItem('ecogrid_token');
@@ -80,12 +83,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(receivedUser);
   };
 
-  const demoLogin = async (role: 'ADMIN' | 'ENERGY_MANAGER' = 'ADMIN') => {
-    const email = role === 'ADMIN' ? 'admin@abc.edu' : 'facility@abc.edu';
-    await login(email, 'admin123');
+  const switchOrganization = async (organizationId: string) => {
+    const res = await api.post('/auth/switch-organization', { organizationId });
+    localStorage.setItem('ecogrid_token', res.data.token);
+    setToken(res.data.token);
+    setUser((current) => ({ ...current!, ...res.data.user, organizations: current?.organizations || [] }));
   };
 
   const logout = () => {
+    void api.post('/auth/logout').catch(() => undefined);
     localStorage.removeItem('ecogrid_token');
     setToken(null);
     setUser(null);
@@ -100,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         login,
         register,
-        demoLogin,
+        switchOrganization,
         logout,
       }}
     >

@@ -7,10 +7,13 @@ import app from '../../app';
 import { config, prisma } from '../../config';
 import { parseTimestamp } from './schedule.controller';
 
-let server: any; let base = ''; let orgA: any; let orgB: any; let user: any; let buildingA: any; let roomA: any; let meterA: any; let meterBuilding: any; let token = '';
+let server: any; let base = ''; let orgA: any; let orgB: any; let user: any; let viewer: any; let buildingA: any; let roomA: any; let meterA: any; let meterBuilding: any; let token = '';
 const csvFile = (text: string, name: string) => { const f = new FormData(); f.append('file', new Blob([text], { type: 'text/csv' }), name); return f; };
 const auth = () => ({ authorization: `Bearer ${token}` });
-const roleAuth = (role: string, organizationId = orgA?.id) => ({ authorization: `Bearer ${jwt.sign({ id: user.id, email: user.email, name: user.name, role, organizationId }, config.jwtSecret)}` });
+const roleAuth = (role: string, organizationId = orgA?.id) => {
+  const actor = role === 'VIEWER' ? viewer : user;
+  return { authorization: `Bearer ${jwt.sign({ id: actor.id, email: actor.email, name: actor.name, role, organizationId }, config.jwtSecret)}` };
+};
 
 before(async () => {
   const db = new URL(process.env.DATABASE_URL || '');
@@ -18,6 +21,9 @@ before(async () => {
   orgA = await prisma.organization.create({ data: { name: 'A6 test org A', timezone: 'UTC' } });
   orgB = await prisma.organization.create({ data: { name: 'A6 test org B', timezone: 'UTC' } });
   user = await prisma.user.create({ data: { name: 'A6 tester', email: `a6-${Date.now()}@example.invalid`, passwordHash: 'not-used' } });
+  viewer = await prisma.user.create({ data: { name: 'A6 viewer', email: `a6-viewer-${Date.now()}@example.invalid`, passwordHash: 'not-used' } });
+  await prisma.organizationMember.create({ data: { organizationId: orgA.id, userId: user.id, role: 'ORG_ADMIN', status: 'ACTIVE' } });
+  await prisma.organizationMember.create({ data: { organizationId: orgA.id, userId: viewer.id, role: 'VIEWER', status: 'ACTIVE' } });
   buildingA = await prisma.building.create({ data: { organizationId: orgA.id, name: 'A6 test building' } });
   roomA = await prisma.room.create({ data: { organizationId: orgA.id, buildingId: buildingA.id, roomNumber: 'A6-101' } });
   meterA = await prisma.meter.create({ data: { organizationId: orgA.id, buildingId: buildingA.id, roomId: roomA.id, meterName: 'A6 test meter' } });
@@ -41,7 +47,7 @@ after(async () => {
     }
     if (orgA?.id) await fs.rm(path.resolve(config.importStorageDir, 'operational', orgA.id), { recursive: true, force: true });
   }
-  if (user) await prisma.user.deleteMany({ where: { id: user.id } });
+  await prisma.user.deleteMany({ where: { id: { in: [user?.id, viewer?.id].filter(Boolean) } } });
   await prisma.$disconnect();
 });
 

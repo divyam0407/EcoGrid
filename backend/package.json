@@ -16,6 +16,7 @@
     "test:a7": "node scripts/run_a7_tests.js",
     "test:a8": "node scripts/run_a8_tests.js",
     "test:a9": "node scripts/run_a9_tests.js",
+    "test:a10": "node scripts/run_a10_tests.js",
     "prisma:migrate:a7-test": "node scripts/migrate_a7_test.js"
   },
   "dependencies": {

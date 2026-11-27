@@ -31,8 +31,10 @@ services:
       - PORT=8000
       - IMPORT_SERVICE_TOKEN=${IMPORT_SERVICE_TOKEN:?Set IMPORT_SERVICE_TOKEN in the environment}
       - IMPORT_STORAGE_DIR=/app/imports
+      - MODEL_ARTIFACT_DIR=/app/model-artifacts
     volumes:
       - importdata:/app/imports
+      - modeldata:/app/model-artifacts
 
   backend:
     build:
@@ -72,3 +74,4 @@ services:
 volumes:
   pgdata:
   importdata:
+  modeldata:

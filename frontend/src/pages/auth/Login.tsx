@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { Zap, Lock, Mail, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
+import { Zap, Lock, Mail, ArrowRight } from 'lucide-react';
 
 export const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -9,7 +9,7 @@ export const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const { login, demoLogin } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -21,19 +21,6 @@ export const Login: React.FC = () => {
       navigate('/');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Invalid credentials.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDemo = async (role: 'ADMIN' | 'ENERGY_MANAGER') => {
-    setError('');
-    setLoading(true);
-    try {
-      await demoLogin(role);
-      navigate('/');
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to start demo session.');
     } finally {
       setLoading(false);
     }
@@ -101,34 +88,6 @@ export const Login: React.FC = () => {
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
-
-        {/* Demo Fast-Track Section */}
-        <div className="mt-6 pt-6 border-t border-slate-800">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center space-x-1">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Explore Pre-Seeded Demo</span>
-            </span>
-            <span className="text-[10px] text-emerald-400 font-mono">ABC University</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => handleDemo('ADMIN')}
-              className="bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-emerald-500/50 p-2.5 rounded-lg text-left transition-all"
-            >
-              <div className="text-xs font-semibold text-slate-200">Campus Admin</div>
-              <div className="text-[10px] text-slate-400">Dr. Sarah Jenkins</div>
-            </button>
-            <button
-              onClick={() => handleDemo('ENERGY_MANAGER')}
-              className="bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-emerald-500/50 p-2.5 rounded-lg text-left transition-all"
-            >
-              <div className="text-xs font-semibold text-slate-200">Energy Manager</div>
-              <div className="text-[10px] text-slate-400">Marcus Vance</div>
-            </button>
-          </div>
-        </div>
 
         <div className="mt-6 text-center text-xs text-slate-400">
           Don't have an organization account?{' '}

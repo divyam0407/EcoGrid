@@ -37,3 +37,4 @@ npm-debug.log*
 
 # Uploaded source files are retained privately for import audit/retry.
 backend/imports/
+model-artifacts/

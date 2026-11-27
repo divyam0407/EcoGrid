@@ -1,31 +1,38 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Sparkles, Building2, User, LogOut, Bell, ShieldCheck } from 'lucide-react';
+import { Sparkles, Building2, LogOut, ShieldCheck } from 'lucide-react';
 
 interface NavbarProps {
   onOpenAssistant: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onOpenAssistant }) => {
-  const { user, logout } = useAuth();
+  const { user, logout, switchOrganization } = useAuth();
+  const [switching, setSwitching] = useState(false);
+  const changeOrganization = async (organizationId: string) => {
+    if (!organizationId || organizationId === user?.organization?.id) return;
+    setSwitching(true);
+    try { await switchOrganization(organizationId); } finally { setSwitching(false); }
+  };
 
   return (
     <header className="h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6 sticky top-0 z-30">
       <div className="flex items-center space-x-3">
         <div className="flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg">
           <Building2 className="w-4 h-4 text-emerald-400" />
-          <span className="text-xs font-medium text-emerald-300">
-            {user?.organization?.name || 'ABC University (DEMO)'}
-          </span>
-          <span className="text-[10px] uppercase tracking-wider bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-bold">
-            Higher Ed
-          </span>
+          {user?.organizations && user.organizations.length > 1 ? (
+            <select aria-label="Active organization" value={user.organization?.id || ''} disabled={switching}
+              onChange={(event) => void changeOrganization(event.target.value)}
+              className="max-w-56 bg-transparent text-xs font-medium text-emerald-300 focus:outline-none">
+              {user.organizations.map((organization) => <option key={organization.id} value={organization.id} className="bg-slate-900">{organization.name}</option>)}
+            </select>
+          ) : <span className="text-xs font-medium text-emerald-300">{user?.organization?.name || 'Organization'}</span>}
         </div>
 
-        <div className="hidden sm:flex items-center space-x-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded">
+        {(user?.organization?.isBenchmark || user?.organization?.tier === 'DEMO_SANDBOX' || user?.organization?.tier === 'RESEARCH_BENCHMARK') && <div className="hidden sm:flex items-center space-x-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-          <span>DEMO DATASET ACTIVE</span>
-        </div>
+          <span>{user.organization.isBenchmark ? 'BENCHMARK DATA' : 'DEMO DATA'}</span>
+        </div>}
       </div>
 
       <div className="flex items-center space-x-4">

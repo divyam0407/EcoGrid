@@ -12,16 +12,17 @@ import {
   Layers,
   MapPin,
   Clock,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const Settings: React.FC = () => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<'profile' | 'buildings' | 'tariffs'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'buildings' | 'tariffs' | 'members' | 'subscription'>('profile');
 
   // Profile Form
-  const [orgName, setOrgName] = useState(user?.organization?.name || 'ABC University (DEMO)');
+  const [orgName, setOrgName] = useState(user?.organization?.name || 'Organization');
   const [industry, setIndustry] = useState(user?.organization?.industryType || 'HIGHER_EDUCATION');
-  const [timezone, setTimezone] = useState(user?.organization?.timezone || 'America/New_York');
+  const [timezone, setTimezone] = useState(user?.organization?.timezone || 'UTC');
   const [currency, setCurrency] = useState(user?.organization?.currency || 'USD');
 
   // Buildings list
@@ -35,11 +36,70 @@ export const Settings: React.FC = () => {
   const [tariffEditor, setTariffEditor] = useState<any>({ tariffName: '', tariffType: 'FLAT', pricePerKwh: '', demandChargePerKw: '', demandWindowMinutes: 60, allowGridExport: false, exportPricePerKwh: '', fixedCharge: '', carbonEmissionKgPerKwh: '', periods: [] as any[] });
   const [editingTariffId, setEditingTariffId] = useState('');
   const [tariffMessage, setTariffMessage] = useState('');
+  const [members, setMembers] = useState<any[]>([]);
+  const [invitations, setInvitations] = useState<any[]>([]);
+  const [inviteForm, setInviteForm] = useState({ email: '', role: 'VIEWER' });
+  const [inviteToken, setInviteToken] = useState('');
+  const [memberMessage, setMemberMessage] = useState('');
+  const [subscription, setSubscription] = useState<any>(null);
+  const [subscriptionMessage, setSubscriptionMessage] = useState('');
+  const isOrgAdmin = ['ORG_ADMIN', 'SUPER_ADMIN'].includes(user?.role || '');
 
   useEffect(() => {
     fetchBuildings();
     fetchTariffs();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'members') void fetchMembers();
+    if (activeTab === 'subscription') void fetchSubscription();
+  }, [activeTab, user?.organization?.id]);
+
+  const fetchMembers = async () => {
+    if (!user?.organization?.id) return;
+    try {
+      const [memberResponse, invitationResponse] = await Promise.all([
+        api.get(`/organizations/${user.organization.id}/members`),
+        isOrgAdmin ? api.get(`/organizations/${user.organization.id}/invitations`) : Promise.resolve({ data: { invitations: [] } }),
+      ]);
+      setMembers(memberResponse.data.members || []);
+      setInvitations(invitationResponse.data.invitations || []);
+    } catch (err: any) { setMemberMessage(err.response?.data?.error || 'Organization members could not be loaded.'); }
+  };
+
+  const inviteMember = async (event: React.FormEvent) => {
+    event.preventDefault(); setInviteToken(''); setMemberMessage('');
+    try {
+      const result = await api.post(`/organizations/${user?.organization?.id}/invitations`, inviteForm);
+      setInviteToken(result.data.invitation.token);
+      setMemberMessage('Invitation created. Send this one-time token to the invitee using a secure channel.');
+      setInviteForm({ email: '', role: 'VIEWER' }); await fetchMembers();
+    } catch (err: any) { setMemberMessage(err.response?.data?.error || 'Invitation could not be created.'); }
+  };
+
+  const updateMemberRole = async (memberId: string, role: string) => {
+    try { await api.patch(`/organizations/${user?.organization?.id}/members/${memberId}`, { role }); await fetchMembers(); }
+    catch (err: any) { setMemberMessage(err.response?.data?.error || 'Role could not be updated.'); }
+  };
+
+  const deactivateMember = async (memberId: string) => {
+    try { await api.delete(`/organizations/${user?.organization?.id}/members/${memberId}`); await fetchMembers(); }
+    catch (err: any) { setMemberMessage(err.response?.data?.error || 'Membership could not be deactivated.'); }
+  };
+
+  const fetchSubscription = async () => {
+    if (!user?.organization?.id) return;
+    try { setSubscription((await api.get(`/organizations/${user.organization.id}/subscription`)).data); }
+    catch (err: any) { setSubscriptionMessage(err.response?.data?.error || 'Subscription details could not be loaded.'); }
+  };
+
+  const scheduleCancellation = async () => {
+    try {
+      await api.post(`/organizations/${user?.organization?.id}/subscription/cancel`);
+      setSubscriptionMessage('Cancellation scheduled. No payment provider is connected, so no payment was taken.');
+      await fetchSubscription();
+    } catch (err: any) { setSubscriptionMessage(err.response?.data?.error || 'Cancellation could not be scheduled.'); }
+  };
 
   const fetchTariffs = async () => {
     if (!user?.organization?.id) return;
@@ -163,6 +223,16 @@ export const Settings: React.FC = () => {
         >
           <DollarSign className="w-4 h-4" />
           <span>Electricity Tariffs</span>
+        </button>
+
+        <button onClick={() => setActiveTab('members')}
+          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'members' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+          <Users className="w-4 h-4" /><span>Users & Roles</span>
+        </button>
+
+        <button onClick={() => setActiveTab('subscription')}
+          className={`flex items-center space-x-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors ${activeTab === 'subscription' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+          <DollarSign className="w-4 h-4" /><span>Plan & Usage</span>
         </button>
       </div>
 
@@ -343,6 +413,59 @@ export const Settings: React.FC = () => {
             {tariff.periods?.map((period: any) => <div key={period.id} className="flex justify-between border-t border-slate-800 pt-2 text-xs"><span className="text-slate-300">{period.periodName} · {period.startTime}–{period.endTime} · {period.dayType}</span><span className="text-white">{currency} {period.pricePerKwh} / kWh</span></div>)}
             <div className="grid grid-cols-2 gap-2 border-t border-slate-800 pt-3 text-xs text-slate-400"><span>Grid export: {tariff.allowGridExport ? `${currency} ${tariff.exportPricePerKwh}/kWh` : 'Not allowed'}</span><span>Demand charge: {tariff.demandChargePerKw == null ? 'Not configured' : `${currency} ${tariff.demandChargePerKw}/kW`}</span><span>Demand window: {tariff.demandWindowMinutes} min</span><span>Fixed charge: {currency} {tariff.fixedCharge}</span><span>Emissions factor: {tariff.carbonEmissionKgPerKwh == null ? 'Not configured' : `${tariff.carbonEmissionKgPerKwh} kg/kWh`}</span></div>
           </div>)}
+        </div>
+      )}
+
+      {activeTab === 'members' && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+            <div className="mb-3 flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-emerald-300" /><h3 className="text-sm font-semibold text-white">Organization membership</h3></div>
+            <p className="mb-4 text-xs text-slate-400">Roles apply only to this organization. Organization administrators cannot grant platform administration.</p>
+            {memberMessage && <p className="mb-3 text-xs text-amber-300">{memberMessage}</p>}
+            {inviteToken && <div className="mb-4 break-all rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 font-mono text-xs text-amber-200">One-time invitation token: {inviteToken}<br />It expires after 72 hours. Deliver it through a trusted channel.</div>}
+            {isOrgAdmin && <form onSubmit={inviteMember} className="mb-5 grid gap-2 sm:grid-cols-[1fr_180px_auto]">
+              <input required type="email" value={inviteForm.email} onChange={e => setInviteForm({ ...inviteForm, email: e.target.value })} placeholder="colleague@university.edu" className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white" />
+              <select value={inviteForm.role} onChange={e => setInviteForm({ ...inviteForm, role: e.target.value })} className="rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-white">
+                {['ENERGY_MANAGER', 'FACILITY_MANAGER', 'ANALYST', 'VIEWER'].map(role => <option key={role}>{role}</option>)}
+              </select>
+              <button className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white">Create invitation</button>
+            </form>}
+            <div className="divide-y divide-slate-800">
+              {members.map(member => <div key={member.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div><div className="text-xs font-semibold text-white">{member.user.name}</div><div className="text-[11px] text-slate-400">{member.user.email} · {member.status}</div></div>
+                <div className="flex items-center gap-2">
+                  {isOrgAdmin ? <select aria-label={`Role for ${member.user.email}`} value={member.role} disabled={member.status !== 'ACTIVE'} onChange={e => void updateMemberRole(member.id, e.target.value)} className="rounded border border-slate-700 bg-slate-950 p-2 text-xs text-white">
+                    {['ORG_ADMIN', 'ENERGY_MANAGER', 'FACILITY_MANAGER', 'ANALYST', 'VIEWER', 'DEPT_MANAGER'].map(role => <option key={role}>{role}</option>)}
+                  </select> : <span className="text-xs text-slate-300">{member.role}</span>}
+                  {isOrgAdmin && member.status === 'ACTIVE' && <button onClick={() => void deactivateMember(member.id)} className="text-xs text-rose-300">Revoke</button>}
+                </div>
+              </div>)}
+            </div>
+          </div>
+          {isOrgAdmin && invitations.length > 0 && <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+            <h3 className="mb-3 text-sm font-semibold text-white">Invitations</h3>
+            {invitations.map(invite => <div key={invite.id} className="flex justify-between border-t border-slate-800 py-3 text-xs"><span className="text-slate-300">{invite.email} · {invite.role} · expires {new Date(invite.expiresAt).toLocaleString()}</span><span className="text-slate-400">{invite.acceptedAt ? 'Accepted' : invite.revokedAt ? 'Revoked' : 'Pending'}</span></div>)}
+          </div>}
+        </div>
+      )}
+
+      {activeTab === 'subscription' && (
+        <div className="max-w-3xl rounded-xl border border-slate-800 bg-slate-900 p-5">
+          <h3 className="mb-2 text-sm font-semibold text-white">Subscription and usage</h3>
+          <p className="mb-4 text-xs text-slate-400">Plan limits are enforced by the API. Billing is not connected; no charge or payment is simulated.</p>
+          {subscriptionMessage && <p className="mb-3 text-xs text-amber-300">{subscriptionMessage}</p>}
+          {subscription ? <>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg bg-slate-950 p-3"><div className="text-[10px] uppercase text-slate-400">Plan</div><div className="mt-1 text-sm font-semibold text-white">{subscription.subscription.planKey}</div></div>
+              <div className="rounded-lg bg-slate-950 p-3"><div className="text-[10px] uppercase text-slate-400">Status</div><div className="mt-1 text-sm font-semibold text-white">{subscription.subscription.status}</div></div>
+              <div className="rounded-lg bg-slate-950 p-3"><div className="text-[10px] uppercase text-slate-400">Trial ends</div><div className="mt-1 text-sm font-semibold text-white">{subscription.subscription.trialEndsAt ? new Date(subscription.subscription.trialEndsAt).toLocaleDateString() : '—'}</div></div>
+            </div>
+            <div className="mt-4 divide-y divide-slate-800">
+              {Object.entries(subscription.usage).map(([key, used]: [string, any]) => { const limit = subscription.entitlements[key]; return <div key={key} className="flex justify-between py-2 text-xs"><span className="text-slate-300">{key.replace(/([A-Z])/g, ' $1')}</span><span className="font-mono text-white">{used}{limit == null ? ' / unlimited' : ` / ${limit}`}</span></div>; })}
+            </div>
+            {isOrgAdmin && !subscription.subscription.cancelAtPeriodEnd && subscription.subscription.status !== 'CANCELED' && <button onClick={() => void scheduleCancellation()} className="mt-4 rounded-lg border border-rose-500/30 px-3 py-2 text-xs text-rose-300">Schedule cancellation</button>}
+            {subscription.billingIntegration !== 'NOT_CONFIGURED' && <p className="mt-3 text-xs text-slate-400">Billing provider: {subscription.subscription.billingProvider}</p>}
+          </> : <p className="text-xs text-slate-400">{subscriptionMessage || 'Loading subscription details…'}</p>}
         </div>
       )}
     </div>

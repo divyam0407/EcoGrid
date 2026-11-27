@@ -2,7 +2,12 @@ import axios from 'axios';
 import { prisma, config } from '../../config';
 import { operationalFeatures } from './operational-features';
 
-let running = false;
+let activePoll: Promise<void> | null = null;
+let timer: NodeJS.Timeout | null = null;
+let lastPollAt: Date | null = null;
+let lastFailureAt: Date | null = null;
+let stopping = false;
+let workerHandle: { stop: () => Promise<void>; health: typeof getForecastWorkerHealth } | null = null;
 
 async function trainQueuedModel(modelId: string) {
   const claimed = await prisma.forecastModel.updateMany({ where: { id: modelId, status: 'QUEUED' }, data: { status: 'TRAINING', stage: 'LOADING_READINGS', progressPercent: 5 } });
@@ -57,20 +62,44 @@ async function trainQueuedModel(modelId: string) {
 }
 
 export function startForecastTrainingWorker() {
+  if (workerHandle) return workerHandle;
   const poll = async () => {
-    if (running) return;
-    running = true;
+    if (activePoll || stopping) return;
+    lastPollAt = new Date();
+    activePoll = (async () => {
     try {
-      const staleBefore = new Date(Date.now() - 4 * 60 * 60 * 1000);
+      // Training calls time out at 20 minutes; older claims can be safely re-queued after a worker crash.
+      const staleBefore = new Date(Date.now() - 30 * 60 * 1000);
       await prisma.forecastModel.updateMany({ where: { status: 'TRAINING', updatedAt: { lt: staleBefore } }, data: {
-        status: 'FAILED', stage: 'FAILED', errorMessage: 'Training worker stopped before completing this job. Submit a retry to run it again.', completedAt: new Date(), progressPercent: 100,
+        status: 'QUEUED', stage: 'QUEUED', errorMessage: 'Training was re-queued after an interrupted worker claim.', completedAt: null, progressPercent: 0,
       } });
       const queued = await prisma.forecastModel.findFirst({ where: { status: 'QUEUED' }, orderBy: { createdAt: 'asc' }, select: { id: true } });
       if (queued) await trainQueuedModel(queued.id);
-    } catch (error) { console.error('Forecast training queue poll failed:', error); }
-    finally { running = false; }
+    } catch (error: any) {
+      lastFailureAt = new Date();
+      process.stderr.write(`${JSON.stringify({ level: 'error', event: 'forecast_worker_poll_failed', errorType: error?.name || 'Error' })}\n`);
+    }
+    })().finally(() => { activePoll = null; });
+    return activePoll;
   };
+  stopping = false;
   void poll();
-  const timer = setInterval(() => void poll(), 1500);
+  timer = setInterval(() => void poll(), 1500);
   timer.unref();
+  workerHandle = {
+    stop: async () => {
+      stopping = true;
+      if (timer) clearInterval(timer);
+      timer = null;
+      if (activePoll) await activePoll;
+      workerHandle = null;
+    },
+    health: getForecastWorkerHealth,
+  };
+  return workerHandle;
+}
+
+export function getForecastWorkerHealth() {
+  return { state: timer && !stopping ? 'RUNNING' : 'STOPPED', processing: Boolean(activePoll),
+    lastPollAt: lastPollAt?.toISOString() || null, lastFailureAt: lastFailureAt?.toISOString() || null };
 }

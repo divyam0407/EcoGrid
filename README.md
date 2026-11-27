@@ -69,15 +69,20 @@ npm run dev
 
 ---
 
-## 🧪 Demonstration Account & Dataset
+## Organization onboarding and data scope
 
-The platform includes a pre-seeded, realistic 60-day operational dataset for **ABC University**:
-- **5 Major Campus Facilities:** Academic Block, Computer Science Block, Library, Hostel Complex, Auditorium.
-- **25 Academic Spaces:** 20 Classrooms, 5 Computer Laboratories with sub-meter telemetry.
-- **7,200 Hourly Energy Readings & 1,440 Solar Readings.**
-- **Seeded Anomalies & Class Timetable Overrun Scenarios.**
+Create an organization using **Register**. The first account becomes that
+organization's administrator and starts a trial entitlement; no payment is
+collected. Invite additional users from Settings and deliver the one-time
+invitation token through a secure channel until an email provider is configured.
+Users can switch among organizations where they have active membership.
 
-An existing ABC University demo database may be provisioned separately. A new empty PostgreSQL database does not contain demo users or readings; do not seed over existing records.
+Existing ABC University content is synthetic demonstration data. It is not a
+customer account or evidence of measured savings or commercial model accuracy.
+A newly created empty PostgreSQL database has no demo users or readings. Never
+run the demo seed script against a database that contains customer records.
+See [deployment and operations](docs/deployment.md) for deployment, migration,
+backup, storage and governance limits.
 
 ## Timetables and academic calendars
 

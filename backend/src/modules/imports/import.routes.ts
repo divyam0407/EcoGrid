@@ -5,6 +5,7 @@ import fs from 'fs';
 import { randomUUID } from 'crypto';
 import { authenticate, requireOrg, requireRole } from '../../middleware/auth';
 import { config } from '../../config';
+import { requireEntitlement } from '../organizations/subscription.service';
 import {
   createDatasetImport,
   getImportBatch,
@@ -28,6 +29,7 @@ router.use(authenticate, requireOrg);
 router.post(
   '/',
   requireRole(['ORG_ADMIN', 'ENERGY_MANAGER']),
+  requireEntitlement('importsPerMonth'),
   upload.fields([
     { name: 'readings', maxCount: 1 },
     { name: 'metadata', maxCount: 1 },
