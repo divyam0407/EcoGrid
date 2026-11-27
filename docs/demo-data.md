@@ -21,17 +21,19 @@ npm run demo:db -- seed
 npm run demo:db -- validate
 ```
 
-`migrate` applies the checked-in Prisma migrations only to `ecogrid_demo`. It does not use `db push`, reset, truncate, or access the live database. `seed` can be rerun: the demo organization and its entities have stable IDs, energy observations use the schema uniqueness key, solar readings use deterministic primary keys, and schedules/calendar rows use stable record keys. The script refuses to run if the demo database contains an organization outside the dedicated ABC synthetic organization. It never deletes existing records.
+`migrate` applies the checked-in Prisma migrations only to `ecogrid_demo`. It does not use `db push`, reset, truncate, or access the live database. `seed` can be rerun: the demo organization and its entities have stable IDs, energy observations use the schema uniqueness key, solar readings use deterministic primary keys, and schedules/calendar rows use stable record keys. If the synthetic batch exists, the seed retains its UTC start and end timestamps and updates the deterministic synthetic rows in place, preserving their primary keys and coverage. It refuses to run if the demo database contains an organization outside the dedicated ABC synthetic organization. It never deletes existing records.
 
 The default local demo login is `demo-admin@abc.edu` with password `EcoGrid-Demo-2026!`. To choose another password on first seed, set `DEMO_ADMIN_PASSWORD` in the environment before running the seed. A rerun does not change an existing account password.
 
 ## Data and provenance
 
-The seed generates five building feeder meters with hourly UTC timestamps for a rolling 90-day window, plus hourly solar output for the Academic Block. Local source timestamps include their UTC offset so repeated daylight-saving-time hours remain distinguishable. Values are deterministic for each timestamp and fixed PRNG seed. Re-running later extends the end of the window; existing energy and solar readings are not rewritten.
+The seed generates five building feeder meters with hourly UTC timestamps for a 90-day window, plus hourly solar output for the Academic Block. The ABC University campus timezone is `Asia/Kolkata` (UTC+05:30); India does not observe daylight saving time. UTC remains the stored timestamp standard while source-local timestamps, timetable rows and calendar events use India local time. Values are deterministic for each timestamp and fixed PRNG seed.
 
 Generated input artifacts are stored under `datasets/demo/`: `energy-readings.csv`, `solar-readings.csv`, and `dataset-manifest.json`. SHA-256 digests, sizes, relative paths, source timezone, units, dataset version, time range, and synthetic assumptions are stored in the manifest/import records. The batch is classified `SYNTHETIC_DEMO`. Solar readings do not have a batch foreign key in the current schema; their installation mapping and file digest are recorded in the batch manifest and mapping metadata.
 
 The fictional campus has one non-overlapping main feeder per building, 26 weekly schedule rows for weekday classes/labs, daily library/residence operations, and weekend auditorium availability (Monday is weekday 0 in the application), plus local-time holidays/breaks. Expected schedule counts describe planned activity only. **No observed or estimated occupancy records are created.** The flat USD 0.15/kWh import price, USD 0.04/kWh export price, 120 kW solar capacity, and 200 kWh battery configuration are illustrative assumptions, not local utility tariffs, real equipment specifications, or verified savings. Synthetic data is not evidence of real-world model accuracy or customer performance.
+
+For the F4 simulated live-meter demonstration, follow [demo-walkthrough.md](demo-walkthrough.md). The simulator is explicitly synthetic and sends hourly interval readings through the authenticated local API.
 
 ## Run EcoGrid against the demo database
 

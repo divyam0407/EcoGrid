@@ -65,8 +65,14 @@ export const runScenario = async (req: Request, res: Response) => {
     sourceModel = await prisma.forecastModel.findFirst({ where: { id: String(c.forecastModelId), organizationId: orgId(req), buildingId: building.id, status: 'READY', isActive: true } });
     if (!sourceModel) return res.status(422).json({ error: 'Selected active forecast model is unavailable for this building.' });
     if (building.meters.length !== 1 || building.meters[0].id !== sourceModel.meterId) return res.status(422).json({ error: 'A scenario demand forecast must come from the building’s single active main-feeder meter.' });
-    const predictions = await prisma.prediction.findMany({ where: { organizationId: orgId(req), buildingId: building.id, meterId: sourceModel.meterId, forecastModelId: sourceModel.id, forecastTimestamp: { gte: new Date() } }, orderBy: { forecastTimestamp: 'asc' }, take: horizon });
-    if (predictions.length !== horizon || predictions.some(p => p.intervalMinutes !== 60)) return res.status(422).json({ error: 'Selected model needs a complete future forecast. Run its forecast first.' });
+    const predictionWindowStart = new Date();
+    const predictions = await prisma.prediction.findMany({ where: { organizationId: orgId(req), buildingId: building.id, meterId: sourceModel.meterId,
+      forecastModelId: sourceModel.id, horizonHours: horizon, createdAt: { gte: new Date(predictionWindowStart.getTime() - 3600000) },
+      forecastTimestamp: { gte: predictionWindowStart } }, orderBy: { forecastTimestamp: 'asc' }, take: horizon });
+    if (predictions.length !== horizon || predictions.some(p => p.intervalMinutes !== 60) ||
+        predictions.some((p, index) => index > 0 && p.forecastTimestamp.getTime() - predictions[index - 1].forecastTimestamp.getTime() !== 3600000)) {
+      return res.status(422).json({ error: 'Selected model needs a fresh, complete, contiguous future forecast. Run its forecast first.' });
+    }
     timestamps = predictions.map(p => p.forecastTimestamp.toISOString());
     demandKw = predictions.map(p => p.predictedKwh);
   }

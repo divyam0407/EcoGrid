@@ -72,6 +72,10 @@ To run the reproducible synthetic ABC University campus demo, use the guarded
 `ecogrid_demo` workflow in [`docs/demo-data.md`](docs/demo-data.md); it never
 targets `ecogrid_db` or the legacy SQLite demo.
 
+For the F4 simulated live-meter walkthrough, including local startup commands,
+the presentation sequence and simulator controls, see
+[`docs/demo-walkthrough.md`](docs/demo-walkthrough.md).
+
 ### 4. Start React Frontend
 ```bash
 cd frontend

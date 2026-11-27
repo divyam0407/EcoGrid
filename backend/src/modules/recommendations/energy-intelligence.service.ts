@@ -158,9 +158,18 @@ function priorityFor(candidate: Opportunity, all: Opportunity[], weights: { ener
 
 export async function generateRecommendations(organizationId: string, userId: string, rawOptions: Partial<Options> = {}) {
   const options: Options = { ...DEFAULT_OPTIONS, ...rawOptions };
-  const now = new Date(); const analysisStart = new Date(now.getTime() - options.analysisDays * 86400000); const baselineStart = new Date(analysisStart.getTime() - options.baselineDays * 86400000);
-  const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { timezone: true, currency: true } });
+  const wallClockNow = new Date();
+  const [org, latestDemoTelemetry] = await Promise.all([
+    prisma.organization.findUnique({ where: { id: organizationId }, select: { timezone: true, currency: true, tier: true } }),
+    prisma.energyReading.findFirst({ where: { organizationId, dataSource: 'SYNTHETIC_DEMO', source: 'SIMULATED_LIVE_TELEMETRY' }, orderBy: { timestamp: 'desc' }, select: { timestamp: true } }),
+  ]);
   if (!org) throw new Error('Organization context is invalid.');
+  // The college demo clock is accelerated to keep the existing hourly model compatible.
+  // For this explicitly synthetic sandbox only, evaluate recommendation windows against
+  // the latest simulated timestamp when it is ahead of wall time.
+  const now = org.tier === 'DEMO_SANDBOX' && latestDemoTelemetry && latestDemoTelemetry.timestamp.getTime() > wallClockNow.getTime() ? latestDemoTelemetry.timestamp : wallClockNow;
+  const analysisStart = new Date(now.getTime() - options.analysisDays * 86400000);
+  const baselineStart = new Date(analysisStart.getTime() - options.baselineDays * 86400000);
   const [readings, schedules, events, occupancy, tariffs, anomalies] = await Promise.all([
     prisma.energyReading.findMany({ where: { organizationId, timestamp: { gte: baselineStart, lt: now }, qualityStatus: { in: VALID_QUALITY } , dataSource: { not: 'INVALID_REJECTED' } }, include: { meter: { select: { id: true, organizationId: true, buildingId: true, roomId: true, room: { select: { id: true, organizationId: true, expectedOperatingHours: true } } } }, building: { select: { id: true, organizationId: true, name: true } } }, orderBy: { timestamp: 'asc' }, take: 50000 }),
     prisma.operationalSchedule.findMany({ where: { organizationId, status: 'ACTIVE' } }),

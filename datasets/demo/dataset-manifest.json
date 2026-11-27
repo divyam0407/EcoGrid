@@ -1,11 +1,11 @@
 {
   "dataset": "ABC University Synthetic Campus Demonstration",
   "datasetVersion": "ecogrid-campus-synthetic-v1",
-  "generatedAt": "2026-11-27T12:26:29.731Z",
+  "generatedAt": "2026-11-27T13:09:12.958Z",
   "synthetic": true,
   "license": "Fictional synthetic data; no third-party license or source",
   "sourceUrl": null,
-  "timezone": "America/New_York",
+  "timezone": "Asia/Kolkata",
   "timeRangeUtc": {
     "start": "2026-08-29T12:00:00.000Z",
     "end": "2026-11-27T12:00:00.000Z"

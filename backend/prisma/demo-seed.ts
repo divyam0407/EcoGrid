@@ -12,7 +12,7 @@ if (connection.pathname !== '/ecogrid_demo' || !['127.0.0.1', 'localhost', '::1'
 const prisma = new PrismaClient();
 const ORG_ID = 'a1000000-0000-4000-8000-000000000001';
 const ADMIN_ID = 'a1000000-0000-4000-8000-000000000002';
-const TIMEZONE = 'America/New_York';
+const TIMEZONE = 'Asia/Kolkata';
 const VERSION = 'ecogrid-campus-synthetic-v1';
 const ROOT = path.resolve(__dirname, '../../datasets/demo');
 const stableId = (name: string) => {
@@ -25,20 +25,10 @@ const stableId = (name: string) => {
 const csv = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
 const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 const fmtLocal = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(d).replace(',', '');
-function localOffset(d: Date) {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: TIMEZONE, timeZoneName: 'longOffset' }).formatToParts(d);
-  return parts.find(x => x.type === 'timeZoneName')?.value.replace('GMT', '') || '+00:00';
-}
+function localOffset(_d: Date) { return '+05:30'; }
 function localToUtc(y: number, m: number, day: number, hour = 0) {
-  // Calendar anchors occur at local midnight; a two-pass offset calculation handles DST.
-  const nominal = Date.UTC(y, m - 1, day, hour);
-  const first = new Date(nominal);
-  const off1 = localOffset(first);
-  const mins1 = (off1[0] === '-' ? -1 : 1) * (Number(off1.slice(1,3)) * 60 + Number(off1.slice(4,6)));
-  const guess = new Date(nominal - mins1 * 60000);
-  const off2 = localOffset(guess);
-  const mins2 = (off2[0] === '-' ? -1 : 1) * (Number(off2.slice(1,3)) * 60 + Number(off2.slice(4,6)));
-  return new Date(nominal - mins2 * 60000);
+  // India Standard Time is fixed at UTC+05:30 and has no daylight saving time.
+  return new Date(Date.UTC(y, m - 1, day, hour) - 330 * 60000);
 }
 function csvLocal(d: Date) { return `${fmtLocal(d)}${localOffset(d)}`; }
 function prng(seed: number) {
@@ -57,8 +47,9 @@ async function main() {
   if (otherOrgs.length) throw new Error('ecogrid_demo contains an organization outside the dedicated synthetic ABC demo. Refusing to seed.');
 
   const now = new Date();
-  const end = new Date(Math.floor(now.getTime() / 3600000) * 3600000);
-  const start = new Date(end.getTime() - 90 * 86400000);
+  const existingBatch = await prisma.dataImportBatch.findFirst({ where: { organizationId: ORG_ID, dataSource: 'SYNTHETIC_DEMO' }, select: { minTimestamp: true, maxTimestamp: true } });
+  const end = existingBatch?.maxTimestamp || new Date(Math.floor(now.getTime() / 3600000) * 3600000);
+  const start = existingBatch?.minTimestamp || new Date(end.getTime() - 90 * 86400000);
   fs.mkdirSync(ROOT, { recursive: true });
 
   const organization = await prisma.organization.upsert({ where: { id: ORG_ID }, create: {
@@ -161,7 +152,7 @@ async function main() {
   const schedules = scheduleTemplates.flatMap(template => template.days.map(day => ({ ...template, day, key: day === template.originalDay ? template.key : `${template.key}-day${day}` })));
   await prisma.$transaction(async tx => {
     for (const [i, s] of schedules.entries()) {
-      const data = { organizationId: ORG_ID, buildingId: buildingIds[s.building], roomId: roomIds[s.room], departmentId: deptIds[s.building], activityName: s.name, activityType: s.type, dayOfWeek: s.day, startTime: s.start, endTime: s.end, expectedOccupancy: s.expected, sourceType: 'SYNTHETIC_DEMO_TIMETABLE', timezone: TIMEZONE, recurrenceRule: 'WEEKLY', recurrenceEnd: end, status: 'ACTIVE', importBatchId: batch.id, sourceRow: i + 2, recordKey: `abc-synth:${s.key}` };
+      const data = { organizationId: ORG_ID, buildingId: buildingIds[s.building], roomId: roomIds[s.room], departmentId: deptIds[s.building], activityName: s.name, activityType: s.type, dayOfWeek: s.day, startTime: s.start, endTime: s.end, expectedOccupancy: s.expected, sourceType: 'SYNTHETIC_DEMO_TIMETABLE', timezone: TIMEZONE, recurrenceRule: 'WEEKLY', recurrenceEnd: new Date(end.getTime() + 365 * 86400000), status: 'ACTIVE', importBatchId: batch.id, sourceRow: i + 2, recordKey: `abc-synth:${s.key}` };
       await tx.operationalSchedule.upsert({ where: { organizationId_recordKey: { organizationId: ORG_ID, recordKey: data.recordKey } }, create: data, update: data });
     }
     const events = [
@@ -176,11 +167,19 @@ async function main() {
       const data = { organizationId: ORG_ID, title: e.title, eventType: e.type, startDatetime: startEvent, endDatetime: endEvent, timezone: TIMEZONE, allDay: true, status: 'ACTIVE', sourceType: 'SYNTHETIC_DEMO_CALENDAR', importBatchId: batch.id, sourceRow: i + 2, recordKey };
       await tx.academicCalendarEvent.upsert({ where: { organizationId_recordKey: { organizationId: ORG_ID, recordKey } }, create: data, update: data });
     }
-    for (const rows of [energyRows, solarRows]) {
-      const model = rows === energyRows ? tx.energyReading : tx.solarReading;
-      for (let offset = 0; offset < rows.length; offset += 1000) {
-        await (model as any).createMany({ data: rows.slice(offset, offset + 1000), skipDuplicates: true });
-      }
+    // Update deterministic synthetic rows in place so timezone/profile corrections retain IDs.
+    for (let offset = 0; offset < energyRows.length; offset += 200) {
+      await Promise.all(energyRows.slice(offset, offset + 200).map(reading => tx.energyReading.upsert({
+        where: { organizationId_meterId_timestamp: { organizationId: reading.organizationId, meterId: reading.meterId, timestamp: reading.timestamp } },
+        create: reading,
+        update: { buildingId: reading.buildingId, roomId: reading.roomId, batchId: reading.batchId, sourceLocalTime: reading.sourceLocalTime,
+          consumptionKwh: reading.consumptionKwh, powerKw: reading.powerKw, rawReading: reading.rawReading, rawUnit: reading.rawUnit,
+          intervalMinutes: reading.intervalMinutes, dataSource: reading.dataSource, source: reading.source, qualityStatus: reading.qualityStatus },
+      })));
+    }
+    for (let offset = 0; offset < solarRows.length; offset += 200) {
+      await Promise.all(solarRows.slice(offset, offset + 200).map(reading => tx.solarReading.upsert({ where: { id: reading.id }, create: reading,
+        update: { organizationId: reading.organizationId, installationId: reading.installationId, timestamp: reading.timestamp, generationKwh: reading.generationKwh, powerKw: reading.powerKw } })));
     }
     for (const f of artifactHashes) {
       await tx.importFile.upsert({ where: { id: stableId(`file:${f.fieldName}`) }, create: { id: stableId(`file:${f.fieldName}`), batchId: batch.id, fieldName: f.fieldName, originalFilename: f.name, sha256: f.sha256, sizeBytes: f.sizeBytes, mediaType: f.mediaType, storagePath: f.storagePath }, update: { batchId: batch.id, fieldName: f.fieldName, originalFilename: f.name, sha256: f.sha256, sizeBytes: f.sizeBytes, mediaType: f.mediaType, storagePath: f.storagePath } });

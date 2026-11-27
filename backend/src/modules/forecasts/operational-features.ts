@@ -20,21 +20,21 @@ export async function operationalFeatures(organizationId: string, buildingId: st
     prisma.operationalSchedule.findMany({ where: { organizationId, buildingId, status: 'ACTIVE', OR: [
       { startDatetime: { lte: end }, endDatetime: { gte: start } },
       { recurrenceRule: 'WEEKLY', OR: [{ recurrenceEnd: null }, { recurrenceEnd: { gte: start } }] },
-      ] }, select: { startDatetime: true, endDatetime: true, dayOfWeek: true, startTime: true, endTime: true, recurrenceRule: true, recurrenceEnd: true, timezone: true, updatedAt: true } }),
+      ] }, select: { startDatetime: true, endDatetime: true, dayOfWeek: true, startTime: true, endTime: true, recurrenceRule: true, recurrenceEnd: true, timezone: true, updatedAt: true, sourceType: true } }),
     prisma.academicCalendarEvent.findMany({ where: { organizationId, status: 'ACTIVE', eventType: { in: ['HOLIDAY', 'VACATION', 'EXAMINATION'] },
       AND: [{ OR: [{ buildingId: null }, { buildingId }] }, { startDatetime: { lte: end } }, { endDatetime: { gte: start } }] },
-      select: { startDatetime: true, endDatetime: true, eventType: true, createdAt: true } }),
+      select: { startDatetime: true, endDatetime: true, eventType: true, createdAt: true, sourceType: true } }),
   ]);
   return timestamps.map((timestamp) => {
     const scheduled = schedules.filter((s) => {
-      if (s.updatedAt > timestamp) return false;
+      if (s.updatedAt > timestamp && s.sourceType !== 'SYNTHETIC_DEMO_TIMETABLE') return false;
       if (s.recurrenceRule === 'WEEKLY') {
         const local = localParts(timestamp, s.timezone || timezone);
         return (s.recurrenceEnd == null || timestamp <= s.recurrenceEnd) && s.dayOfWeek === local.day && insideClock(local.minute, s.startTime, s.endTime);
       }
       return !!s.startDatetime && !!s.endDatetime && timestamp >= s.startDatetime && timestamp < s.endDatetime;
     }).length;
-    const knownEvents = calendar.filter((e) => e.createdAt <= timestamp && timestamp >= e.startDatetime && timestamp < e.endDatetime);
+  const knownEvents = calendar.filter((e) => (e.createdAt <= timestamp || e.sourceType === 'SYNTHETIC_DEMO_CALENDAR') && timestamp >= e.startDatetime && timestamp < e.endDatetime);
     const holiday = knownEvents.some((e) => ['HOLIDAY', 'VACATION'].includes(e.eventType));
     const exam = knownEvents.some((e) => e.eventType === 'EXAMINATION');
     return { timestamp: timestamp.toISOString(), scheduled_classes: scheduled, schedule_data_available: schedules.length ? 1 : 0,

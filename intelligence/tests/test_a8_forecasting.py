@@ -50,6 +50,18 @@ class A8ForecastingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             engine.generate_forecast(pd.DataFrame(), 48)
 
+    def test_forecast_window_bridges_missing_hour_and_returns_future_horizon_only(self):
+        engine = DemandForecastingEngine("baseline", "UTC")
+        engine.train_and_evaluate(self.readings())
+        last_history_hour = pd.to_datetime(engine.training_rows.timestamp.iloc[-1], utc=True)
+        requested_start = last_history_hour + pd.Timedelta(hours=3)
+        points = engine.generate_forecast(pd.DataFrame(), 24, forecast_start=requested_start)
+        self.assertEqual(len(points), 24)
+        self.assertEqual(pd.Timestamp(points[0]["timestamp"]), requested_start)
+        self.assertEqual(pd.Timestamp(points[-1]["timestamp"]), requested_start + pd.Timedelta(hours=23))
+        with self.assertRaisesRegex(ValueError, "more than 24 hours"):
+            engine.generate_forecast(pd.DataFrame(), 24, forecast_start=last_history_hour + pd.Timedelta(hours=26))
+
     def test_invalid_quality_excluded_and_insufficient_history_rejected(self):
         rows = self.readings(5)
         rows[10]["quality_status"] = "METER_RESET_ROLLOVER"

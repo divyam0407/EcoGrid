@@ -15,8 +15,10 @@ before(async () => {
   await prisma.organizationMember.create({ data: { organizationId: orgId, userId } });
   const building = await prisma.building.create({ data: { organizationId: orgId, name: 'A8 Test Building' } }); buildingId = building.id;
   const meter = await prisma.meter.create({ data: { organizationId: orgId, buildingId, meterName: 'A8 Test Meter', dataSource: 'BENCHMARK' } }); meterId = meter.id;
+  const lastCompleteHour = Math.floor(Date.now() / 3600000) * 3600000 - 3600000;
+  const firstHour = lastCompleteHour - (24 * 45 - 1) * 3600000;
   const readings = Array.from({ length: 24 * 45 }, (_, i) => ({ organizationId: orgId, meterId, buildingId,
-    timestamp: new Date(Date.UTC(2025, 0, 1) + i * 3600000), consumptionKwh: 20 + (i % 24) / 3,
+    timestamp: new Date(firstHour + i * 3600000), consumptionKwh: 20 + (i % 24) / 3,
     intervalMinutes: 60, qualityStatus: 'MEASURED', dataSource: 'BENCHMARK' }));
   await prisma.energyReading.createMany({ data: readings });
 });
@@ -64,6 +66,9 @@ test('monitoring matches actual intervals and leaves missing actuals pending', a
   const forecast = await invoke(runForecast, { user: { organizationId: orgId }, body: { meterId, modelId: model.id, horizonHours: 24 } });
   assert.equal(forecast.status, 200);
   assert.equal(forecast.body.forecasts.length, 24);
+  assert.ok(new Date(forecast.body.forecasts[0].timestamp).getTime() >= Date.now());
+  assert.ok(forecast.body.forecasts.every((point: any, index: number) => index === 0 ||
+    new Date(point.timestamp).getTime() - new Date(forecast.body.forecasts[index - 1].timestamp).getTime() === 3600000));
   assert.equal(await prisma.prediction.count({ where: { organizationId: orgId, forecastModelId: model.id } }), 24);
   const timestamp = new Date(Date.now() - 30 * 60000);
   await prisma.prediction.create({ data: { organizationId: orgId, buildingId, meterId, forecastModelId: model.id, modelVersion: 'test-v2',

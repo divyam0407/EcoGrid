@@ -21,8 +21,10 @@ export const runOptimization = async (req: Request, res: Response) => {
     const meter = building.meters[0];
     const model = await prisma.forecastModel.findFirst({ where: { organizationId: orgId, buildingId: building.id, meterId: meter.id, status: 'READY', isActive: true }, orderBy: { version: 'desc' } });
     if (!model) return res.status(422).json({ error: 'No active ready A8 demand forecast model is configured for the main-feeder meter.' });
+    const predictionWindowStart = new Date();
     const predictions = await prisma.prediction.findMany({
-      where: { organizationId: orgId, buildingId: building.id, meterId: meter.id, forecastModelId: model.id, forecastTimestamp: { gte: new Date() } },
+      where: { organizationId: orgId, buildingId: building.id, meterId: meter.id, forecastModelId: model.id, horizonHours: horizon,
+        createdAt: { gte: new Date(predictionWindowStart.getTime() - 3600000) }, forecastTimestamp: { gte: predictionWindowStart } },
       orderBy: { forecastTimestamp: 'asc' }, take: horizon,
     });
     if (predictions.length !== horizon || predictions.some(p => p.intervalMinutes !== 60)) {

@@ -15,6 +15,7 @@ import {
   Upload,
   Settings,
   Zap,
+  Radio,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -26,6 +27,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const navItems = [
     { label: 'Overview', to: '/', icon: LayoutDashboard },
     { label: 'Energy Monitoring', to: '/energy', icon: Activity },
+    { label: 'Live Monitoring', to: '/live-monitoring', icon: Radio },
     { label: 'Dataset Imports', to: '/imports', icon: Upload },
     { label: 'Operational Intelligence', to: '/operations', icon: CalendarClock, highlight: true },
     { label: 'Demand Forecasting', to: '/forecasting', icon: TrendingUp },

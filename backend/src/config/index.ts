@@ -8,6 +8,7 @@ const nodeEnv = process.env.NODE_ENV || 'development';
 const jwtSecret = process.env.JWT_SECRET || '';
 const importServiceToken = process.env.IMPORT_SERVICE_TOKEN || '';
 const databaseUrl = process.env.DATABASE_URL || '';
+const demoTelemetryEnabled = process.env.DEMO_TELEMETRY_ENABLED === 'true';
 if (jwtSecret.length < 32) throw new Error('JWT_SECRET must contain at least 32 characters.');
 if (importServiceToken.length < 32) throw new Error('IMPORT_SERVICE_TOKEN must contain at least 32 characters.');
 if (!databaseUrl.startsWith('postgresql://') && !databaseUrl.startsWith('postgres://')) throw new Error('DATABASE_URL must use PostgreSQL.');
@@ -33,6 +34,7 @@ export const config = {
   importServiceToken,
   importStorageDir: path.resolve(process.env.IMPORT_STORAGE_DIR || './imports'),
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  demoTelemetryEnabled,
 };
 
 export const prisma = new PrismaClient();

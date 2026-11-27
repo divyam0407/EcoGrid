@@ -151,7 +151,8 @@ class DemandForecastingEngine:
                         "quality": quality, "horizon_metrics": horizon_metrics}
         return self.metrics, {"processed_df": usable, "features": features, "comparison": comparison}
 
-    def generate_forecast(self, historical_df: pd.DataFrame, horizon_hours: int = 24, future_ops=None) -> List[Dict[str, Any]]:
+    def generate_forecast(self, historical_df: pd.DataFrame, horizon_hours: int = 24, future_ops=None,
+                          forecast_start=None) -> List[Dict[str, Any]]:
         if horizon_hours not in (24, 168):
             raise ValueError("Supported forecast horizons are 24 or 168 hours.")
         if self.metrics and not self.metrics.get("horizon_metrics", {}).get(str(horizon_hours), {}).get("available", False):
@@ -166,13 +167,23 @@ class DemandForecastingEngine:
                 raise ValueError("Recent observed history is insufficient for this model's lag features.")
             history = recent.sort_values("timestamp").copy()
         last = pd.to_datetime(history.timestamp.iloc[-1], utc=True)
+        start = last + timedelta(hours=1) if forecast_start is None else pd.to_datetime(forecast_start, utc=True)
+        if pd.isna(start):
+            raise ValueError("Forecast start must be a valid UTC timestamp.")
+        if start.minute or start.second or start.microsecond:
+            raise ValueError("Forecast start must align to a UTC hour.")
+        bridge_hours = int((start - last).total_seconds() // 3600) - 1
+        if bridge_hours < 0 or (start - last).total_seconds() % 3600:
+            raise ValueError("Forecast start must follow the latest usable historical hour.")
+        if bridge_hours > 24:
+            raise ValueError("Latest usable history is more than 24 hours behind the requested forecast window.")
         future_map = {}
         for item in future_ops or []:
             stamp = pd.to_datetime(item.get("timestamp"), utc=True, errors="coerce")
             if pd.notna(stamp):
                 future_map[stamp.floor("h").isoformat()] = item
         results = []
-        for step in range(1, horizon_hours + 1):
+        for step in range(1, bridge_hours + horizon_hours + 1):
             ts = last + timedelta(hours=step)
             row = {"timestamp": ts, "consumption_kwh": np.nan}
             frame = pd.concat([history, pd.DataFrame([row])], ignore_index=True)
@@ -205,13 +216,14 @@ class DemandForecastingEngine:
             else:
                 pred = float(predict_baseline(self.selected_model, history, pd.DataFrame([{"timestamp": ts}]))[0])
             pred = max(0.0, pred)
-            results.append({"timestamp": ts.isoformat(), "predicted_consumption_kwh": pred,
-                            "predicted_demand_kw": pred, "confidence_lower": max(0.0, pred-self.validation_interval) if self.validation_interval is not None else None,
-                            "confidence_upper": pred+self.validation_interval if self.validation_interval is not None else None,
-                            "interval_type": "empirical_validation_abs_error_p90" if self.validation_interval is not None else None,
-                            "factors": {"model": self.selected_model, "timezone": self.timezone,
-                                        "scheduled_classes": operational.get("scheduled_classes") if operational else None,
-                                        "is_holiday": operational.get("is_holiday") if operational else None,
-                                        "is_exam_period": operational.get("is_exam_period") if operational else None}})
+            if ts >= start:
+                results.append({"timestamp": ts.isoformat(), "predicted_consumption_kwh": pred,
+                                "predicted_demand_kw": pred, "confidence_lower": max(0.0, pred-self.validation_interval) if self.validation_interval is not None else None,
+                                "confidence_upper": pred+self.validation_interval if self.validation_interval is not None else None,
+                                "interval_type": "empirical_validation_abs_error_p90" if self.validation_interval is not None else None,
+                                "factors": {"model": self.selected_model, "timezone": self.timezone,
+                                            "scheduled_classes": operational.get("scheduled_classes") if operational else None,
+                                            "is_holiday": operational.get("is_holiday") if operational else None,
+                                            "is_exam_period": operational.get("is_exam_period") if operational else None}})
             history = pd.concat([history, pd.DataFrame([{**row, "consumption_kwh": pred, **features}])], ignore_index=True)
         return results

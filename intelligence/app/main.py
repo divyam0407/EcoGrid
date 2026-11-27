@@ -291,7 +291,8 @@ def predict_registered_model(model_id: str, payload: Dict[str, Any], x_import_se
     try:
         engine = joblib.load(artifact)
         horizon = int(payload.get("horizon_hours", 24))
-        forecasts = engine.generate_forecast(pd.DataFrame(payload.get("historical_data") or []), horizon)
+        forecasts = engine.generate_forecast(pd.DataFrame(payload.get("historical_data") or []), horizon,
+                                             payload.get("future_operational_data"), payload.get("forecast_start"))
         recent_hourly, _ = prepare_hourly(payload.get("historical_data") or [], engine.timezone)
         actual_history = [{"timestamp": row.timestamp.isoformat(), "actual_kwh": float(row.consumption_kwh),
                            "predicted_demand_kw": float(row.consumption_kwh)}

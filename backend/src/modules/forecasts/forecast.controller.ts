@@ -78,29 +78,38 @@ export const runForecast = async (req: Request, res: Response) => {
     if (!model) return res.status(422).json({ error: 'No active ready model exists for this meter and source. Train and activate a model first.' });
     const meter = await prisma.meter.findFirst({ where: { id: model.meterId, organizationId, buildingId: model.buildingId } });
     if (!meter) return res.status(404).json({ error: 'Meter not found in this organization.' });
-    const readings = await prisma.energyReading.findMany({ where: { organizationId, meterId: model.meterId, buildingId: model.buildingId, dataSource: model.dataSource },
+    const now = new Date();
+    const nextUtcHour = new Date(Math.ceil(now.getTime() / 3600000) * 3600000);
+    const readings = await prisma.energyReading.findMany({ where: { organizationId, meterId: model.meterId, buildingId: model.buildingId, dataSource: model.dataSource, timestamp: { lte: now } },
       orderBy: { timestamp: 'desc' }, take: 2000, select: { timestamp: true, consumptionKwh: true, powerKw: true, intervalMinutes: true, qualityStatus: true } });
     const organization = await prisma.organization.findUnique({ where: { id: organizationId }, select: { timezone: true } });
     const orderedReadings = readings.reverse();
     const historicalOperationalData = await operationalFeatures(organizationId, model.buildingId, orderedReadings.map((r) => r.timestamp), organization?.timezone || 'UTC');
     const historicalOpsByTime = new Map(historicalOperationalData.map((v) => [v.timestamp, v]));
-    const lastTimestamp = orderedReadings.length ? orderedReadings[orderedReadings.length - 1].timestamp : new Date();
-    const futureTimestamps = Array.from({ length: Number(horizonHours) }, (_, i) => new Date(lastTimestamp.getTime() + (i + 1) * 3600000));
+    if (!orderedReadings.length) return res.status(422).json({ error: 'No non-future readings are available for forecasting.' });
+    const lastTimestamp = orderedReadings[orderedReadings.length - 1].timestamp;
+    const forecastStart = new Date(Math.max(nextUtcHour.getTime(), Math.ceil((lastTimestamp.getTime() + 1) / 3600000) * 3600000));
+    const futureTimestamps = Array.from({ length: Number(horizonHours) + 25 }, (_, i) => new Date(forecastStart.getTime() - (25 - i) * 3600000));
     const futureOperationalData = await operationalFeatures(organizationId, model.buildingId, futureTimestamps, organization?.timezone || 'UTC');
     const response = await axios.post(`${config.pythonServiceUrl}/api/forecast/models/${model.id}/predict`, {
-      organization_id: organizationId, horizon_hours: Number(horizonHours),
+      organization_id: organizationId, horizon_hours: Number(horizonHours), forecast_start: forecastStart.toISOString(),
       historical_data: orderedReadings.map((r) => ({ timestamp: r.timestamp.toISOString(), consumption_kwh: r.consumptionKwh, power_kw: r.powerKw,
         interval_minutes: r.intervalMinutes, quality_status: r.qualityStatus, ...(historicalOpsByTime.get(r.timestamp.toISOString()) || {}) })), timezone: organization?.timezone || 'UTC',
       future_operational_data: futureOperationalData,
     }, { timeout: 120000, headers: { 'X-Import-Service-Token': config.importServiceToken } });
     const predictions = response.data.forecasts || [];
-    await prisma.prediction.createMany({ skipDuplicates: true, data: predictions.map((f: any, index: number) => ({
+    await prisma.$transaction(predictions.map((f: any, index: number) => prisma.prediction.upsert({
+      where: { organizationId_sourcePredictionKey: { organizationId, sourcePredictionKey: `${model.id}:${f.timestamp}` } },
+      create: {
       organizationId, buildingId: model.buildingId, meterId: model.meterId, forecastModelId: model.id, modelVersion: `${model.algorithm}-v${model.version}`,
       predictionType: Number(horizonHours) > 24 ? '7_DAY_DEMAND' : '24_HOUR_DEMAND', forecastTimestamp: new Date(f.timestamp), predictedKwh: f.predicted_consumption_kwh,
       dataSource: model.dataSource, confidenceLower: f.confidence_lower, confidenceUpper: f.confidence_upper, horizonHours: Number(horizonHours), leadHours: index + 1, intervalMinutes: 60,
       sourcePredictionKey: `${model.id}:${f.timestamp}`,
-    })) });
-    return res.json({ ...response.data, metrics: model.metricsJson ? JSON.parse(model.metricsJson) : null, model: modelSummary(model), dataSource: model.dataSource });
+      },
+      update: { modelVersion: `${model.algorithm}-v${model.version}`, predictedKwh: f.predicted_consumption_kwh,
+        confidenceLower: f.confidence_lower, confidenceUpper: f.confidence_upper, horizonHours: Number(horizonHours), leadHours: index + 1, createdAt: new Date() },
+    })));
+    return res.json({ ...response.data, forecastStart: forecastStart.toISOString(), metrics: model.metricsJson ? JSON.parse(model.metricsJson) : null, model: modelSummary(model), dataSource: model.dataSource });
   } catch (error: any) { return res.status(error.response?.status || 503).json({ error: error.response?.data?.detail || 'Forecast service is unavailable.' }); }
 };
 

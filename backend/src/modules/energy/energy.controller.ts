@@ -1,8 +1,104 @@
 import { Request, Response } from 'express';
-import { prisma } from '../../config';
+import { prisma, config } from '../../config';
 import csvParser from 'csv-parser';
 import { Readable } from 'stream';
 import { tariffRateAt } from '../recommendations/energy-intelligence.service';
+
+const DEMO_ORGANIZATION_ID = 'a1000000-0000-4000-8000-000000000001';
+const TELEMETRY_SOURCE = 'SIMULATED_LIVE_TELEMETRY';
+const CAMPUS_TIMEZONE = 'Asia/Kolkata';
+
+function telemetryDisabled(res: Response) {
+  return res.status(404).json({ error: 'Simulated telemetry is disabled for this environment.' });
+}
+
+export const getTelemetryStatus = async (req: Request, res: Response) => {
+  if (!config.demoTelemetryEnabled || config.nodeEnv === 'production' || req.user?.organizationId !== DEMO_ORGANIZATION_ID) return telemetryDisabled(res);
+  try {
+    const organizationId = req.user!.organizationId;
+    const [organization, meters, latestReading, recentReadings] = await Promise.all([
+      prisma.organization.findFirst({ where: { id: organizationId, tier: 'DEMO_SANDBOX' }, select: { timezone: true } }),
+      prisma.meter.findMany({ where: { organizationId, dataSource: 'SYNTHETIC_DEMO', status: 'ACTIVE' }, select: { id: true, meterName: true, buildingId: true, building: { select: { name: true } } }, orderBy: { meterName: 'asc' } }),
+      prisma.energyReading.findFirst({ where: { organizationId, dataSource: 'SYNTHETIC_DEMO' }, orderBy: { timestamp: 'desc' }, select: { timestamp: true } }),
+      prisma.energyReading.findMany({
+        where: { organizationId, dataSource: 'SYNTHETIC_DEMO', source: TELEMETRY_SOURCE },
+        orderBy: { timestamp: 'desc' }, take: 100,
+        include: { meter: { select: { id: true, meterName: true, building: { select: { name: true } } } } },
+      }),
+    ]);
+    if (!organization || organization.timezone !== CAMPUS_TIMEZONE) return res.status(409).json({ error: 'The demo campus timezone must be corrected before live telemetry is enabled.' });
+    const selectedMeterId = typeof req.query.meterId === 'string' ? req.query.meterId : undefined;
+    const historicalMeter = selectedMeterId ? meters.find((meter) => meter.id === selectedMeterId) : meters[0];
+    if (selectedMeterId && !historicalMeter) return res.status(404).json({ error: 'Meter not found in this organization.' });
+    const historicalReadings = historicalMeter ? await prisma.energyReading.findMany({ where: { organizationId, meterId: historicalMeter.id, dataSource: 'SYNTHETIC_DEMO', source: { not: TELEMETRY_SOURCE } }, orderBy: { timestamp: 'desc' }, take: 168, select: { timestamp: true, consumptionKwh: true, powerKw: true } }) : [];
+    return res.json({ enabled: true, synthetic: true, timezone: organization.timezone, intervalMinutes: 60,
+      meters, latestCampusTimestamp: latestReading?.timestamp || null,
+      lastIngestedAt: recentReadings[0]?.createdAt || null,
+      historicalReadings: historicalReadings.reverse(),
+      recentReadings: recentReadings.reverse().map((reading) => ({ timestamp: reading.timestamp, consumptionKwh: reading.consumptionKwh, powerKw: reading.powerKw, meterId: reading.meterId, meterName: reading.meter.meterName, buildingName: reading.meter.building.name, qualityStatus: reading.qualityStatus, source: reading.source })),
+    });
+  } catch { return res.status(500).json({ error: 'Telemetry status could not be loaded.' }); }
+};
+
+export const ingestTelemetry = async (req: Request, res: Response) => {
+  if (!config.demoTelemetryEnabled || config.nodeEnv === 'production' || req.user?.organizationId !== DEMO_ORGANIZATION_ID) return telemetryDisabled(res);
+  const submitted = req.body?.readings;
+  if (!Array.isArray(submitted) || submitted.length < 1 || submitted.length > 10) {
+    return res.status(400).json({ error: 'Submit between 1 and 10 interval readings.' });
+  }
+  const normalized: Array<{ meterId: string; timestamp: Date; valueKwh: number; rawReading: number; rawUnit: string }> = [];
+  const keys = new Set<string>();
+  for (const [index, item] of submitted.entries()) {
+    const rawTimestamp = typeof item?.timestamp === 'string' ? item.timestamp : '';
+    const meterId = typeof item?.meterId === 'string' ? item.meterId.trim() : '';
+    const measurementType = item?.measurementType;
+    const unit = typeof item?.unit === 'string' ? item.unit.trim() : '';
+    const rawReading = item?.value;
+    const timestamp = new Date(rawTimestamp);
+    const timestampPattern = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/;
+    const canonicalTimestamp = Number.isFinite(timestamp.getTime())
+      ? (rawTimestamp.includes('.') ? timestamp.toISOString() : timestamp.toISOString().replace('.000Z', 'Z'))
+      : '';
+    if (!meterId || measurementType !== 'INTERVAL_ENERGY' || !timestampPattern.test(rawTimestamp) || canonicalTimestamp !== rawTimestamp) {
+      return res.status(400).json({ error: `Reading ${index + 1} must include a meter ID, UTC timestamp ending in Z and measurementType INTERVAL_ENERGY.` });
+    }
+    if (typeof rawReading !== 'number' || !Number.isFinite(rawReading) || rawReading < 0 || rawReading > 50000) {
+      return res.status(400).json({ error: `Reading ${index + 1} must have a finite, non-negative interval value no greater than 50000.` });
+    }
+    const factors: Record<string, number> = { kWh: 1, Wh: 0.001, MWh: 1000 };
+    if (!Object.prototype.hasOwnProperty.call(factors, unit)) return res.status(400).json({ error: `Reading ${index + 1} has an unsupported energy unit. Use kWh, Wh or MWh.` });
+    if (rawReading * factors[unit] > 50000) return res.status(400).json({ error: `Reading ${index + 1} exceeds the normalized 50000 kWh interval limit.` });
+    const key = `${meterId}:${timestamp.toISOString()}`;
+    if (keys.has(key)) return res.status(400).json({ error: 'A request cannot contain duplicate meter and timestamp pairs.' });
+    keys.add(key);
+    normalized.push({ meterId, timestamp, valueKwh: rawReading * factors[unit], rawReading, rawUnit: unit });
+  }
+  try {
+    const organizationId = req.user!.organizationId;
+    const result = await prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.findFirst({ where: { id: organizationId, tier: 'DEMO_SANDBOX', timezone: CAMPUS_TIMEZONE }, select: { id: true } });
+      if (!organization) throw Object.assign(new Error('Live telemetry requires the configured ABC University demo organization.'), { status: 403 });
+      const meters = await tx.meter.findMany({ where: { id: { in: normalized.map((r) => r.meterId) }, organizationId, dataSource: 'SYNTHETIC_DEMO', status: 'ACTIVE' }, select: { id: true, buildingId: true } });
+      if (meters.length !== new Set(normalized.map((r) => r.meterId)).size) throw Object.assign(new Error('One or more meters are not active synthetic-demo meters in this organization.'), { status: 403 });
+      const byMeter = new Map(meters.map((meter) => [meter.id, meter]));
+      const existing = await tx.energyReading.findMany({ where: { organizationId, OR: normalized.map(({ meterId, timestamp }) => ({ meterId, timestamp })) }, select: { meterId: true, timestamp: true, source: true } });
+      const existingKeys = new Map(existing.map((row) => [`${row.meterId}:${row.timestamp.toISOString()}`, row.source]));
+      if (existing.some((row) => row.source !== TELEMETRY_SOURCE)) throw Object.assign(new Error('A reading already exists for this meter and timestamp from another source.'), { status: 409 });
+      const newRecords = normalized.filter((row) => !existingKeys.has(`${row.meterId}:${row.timestamp.toISOString()}`));
+      const inserted = await tx.energyReading.createMany({ skipDuplicates: true, data: newRecords.map((row) => {
+        const meter = byMeter.get(row.meterId)!;
+        return { organizationId, buildingId: meter.buildingId, meterId: row.meterId, timestamp: row.timestamp,
+          sourceLocalTime: (() => { const parts = new Intl.DateTimeFormat('en-US', { timeZone: CAMPUS_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(row.timestamp); const get = (type: string) => parts.find((part) => part.type === type)?.value || ''; return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}+05:30`; })(),
+          consumptionKwh: row.valueKwh, powerKw: row.valueKwh, rawReading: row.rawReading, rawUnit: row.rawUnit,
+          intervalMinutes: 60, dataSource: 'SYNTHETIC_DEMO', source: TELEMETRY_SOURCE, qualityStatus: 'MEASURED' };
+      }) });
+      return { insertedCount: inserted.count, duplicateCount: normalized.length - inserted.count, timezone: CAMPUS_TIMEZONE };
+    }, { maxWait: 10000, timeout: 20000 });
+    return res.status(result.insertedCount ? 201 : 200).json({ success: true, synthetic: true, ...result });
+  } catch (error: any) {
+    return res.status(error.status || 500).json({ error: error.status ? error.message : 'Telemetry could not be persisted.' });
+  }
+};
 
 export const previewCsv = async (req: Request, res: Response) => {
   try {
@@ -330,33 +426,28 @@ export const getEnergyTrends = async (req: Request, res: Response) => {
     if (buildingId) where.buildingId = String(buildingId);
     if (dataSource && dataSource !== 'all') where.dataSource = String(dataSource);
 
-    const readings = await prisma.energyReading.findMany({
-      where,
-      orderBy: { timestamp: 'asc' },
-    });
-
-    const solar = dataSource && dataSource !== 'SYNTHETIC_DEMO'
-      ? []
-      : await prisma.solarReading.findMany({
-        where: { organizationId: orgId },
-        orderBy: { timestamp: 'asc' },
-      });
-
-    const solarMap = new Map<string, number>();
-    solar.forEach((s) => {
-      solarMap.set(s.timestamp.toISOString().slice(0, 13), s.generationKwh);
-    });
+    const [readings, solar, organization] = await Promise.all([
+      prisma.energyReading.findMany({ where, orderBy: { timestamp: 'asc' } }),
+      dataSource && dataSource !== 'SYNTHETIC_DEMO'
+        ? Promise.resolve([])
+        : prisma.solarReading.findMany({ where: { organizationId: orgId, ...(buildingId ? { installation: { buildingId: String(buildingId) } } : {}) }, orderBy: { timestamp: 'asc' } }),
+      prisma.organization.findUnique({ where: { id: orgId }, select: { timezone: true } }),
+    ]);
+    const timezone = organization?.timezone || 'UTC';
+    const bucketFor = (timestamp: Date) => {
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(timestamp);
+      const value = (type: string) => parts.find((part) => part.type === type)?.value || '';
+      const date = `${value('year')}-${value('month')}-${value('day')}`;
+      if (interval === 'hourly') return `${date}T${value('hour')}:00:00`;
+      if (interval === 'monthly') return date.slice(0, 7);
+      return date;
+    };
 
     // Grouping by interval (default daily or hourly)
     const grouped = new Map<string, { timestamp: string; consumptionKwh: number; peakKw: number; solarKwh: number; count: number }>();
 
     readings.forEach((r) => {
-      let key = r.timestamp.toISOString().slice(0, 10); // Daily by default
-      if (interval === 'hourly') {
-        key = r.timestamp.toISOString().slice(0, 13) + ':00:00';
-      } else if (interval === 'monthly') {
-        key = r.timestamp.toISOString().slice(0, 7);
-      }
+      const key = bucketFor(r.timestamp);
 
       const existing = grouped.get(key) || {
         timestamp: key,
@@ -371,10 +462,13 @@ export const getEnergyTrends = async (req: Request, res: Response) => {
       if (kw > existing.peakKw) existing.peakKw = kw;
       existing.count += 1;
 
-      // Solar match
-      const solHour = r.timestamp.toISOString().slice(0, 13);
-      existing.solarKwh += (solarMap.get(solHour) || 0) / (interval === 'daily' ? 1 : 1);
+      grouped.set(key, existing);
+    });
 
+    solar.forEach((reading) => {
+      const key = bucketFor(reading.timestamp);
+      const existing = grouped.get(key) || { timestamp: key, consumptionKwh: 0, peakKw: 0, solarKwh: 0, count: 0 };
+      existing.solarKwh += reading.generationKwh;
       grouped.set(key, existing);
     });
 

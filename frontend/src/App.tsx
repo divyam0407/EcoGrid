@@ -7,6 +7,7 @@ import { Login } from './pages/auth/Login';
 import { Register } from './pages/auth/Register';
 import { Dashboard } from './pages/dashboard/Dashboard';
 import { EnergyMonitoring } from './pages/energy/EnergyMonitoring';
+import { LiveMonitoring } from './pages/energy/LiveMonitoring';
 import { OperationalIntelligence } from './pages/operations/OperationalIntelligence';
 import { DemandForecasting } from './pages/forecasting/DemandForecasting';
 import { AnomalyDetection } from './pages/anomalies/AnomalyDetection';
@@ -56,6 +57,7 @@ export const App: React.FC = () => {
           >
             <Route index element={<Dashboard />} />
             <Route path="energy" element={<EnergyMonitoring />} />
+            <Route path="live-monitoring" element={<LiveMonitoring />} />
             <Route path="imports" element={<DataImports />} />
             <Route path="operations" element={<OperationalIntelligence />} />
             <Route path="forecasting" element={<DemandForecasting />} />

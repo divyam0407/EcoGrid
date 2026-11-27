@@ -13,6 +13,7 @@
     "prisma:migrate:legacy-sqlite": "ts-node prisma/migrate_sqlite_to_postgres.ts",
     "prisma:seed": "ts-node src/prisma/seed.ts",
     "demo:db": "ts-node scripts/demo-db.ts",
+    "demo:live": "PYTHON_SERVICE_URL=${PYTHON_SERVICE_URL:-http://127.0.0.1:8001} DEMO_TELEMETRY_ENABLED=true npm run demo:db -- dev",
     "test:a6": "node scripts/run_a6_tests.js",
     "test:a7": "node scripts/run_a7_tests.js",
     "test:a8": "node scripts/run_a8_tests.js",

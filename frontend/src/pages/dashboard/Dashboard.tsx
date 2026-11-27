@@ -14,6 +14,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Calendar,
+  Radio,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -55,6 +56,24 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     fetchDashboardData();
   }, [selectedBuilding, timeRange, selectedSource]);
+
+  useEffect(() => {
+    if (selectedSource !== 'all' && selectedSource !== 'SYNTHETIC_DEMO') return;
+    const refreshLiveSummary = async () => {
+      const filters = new URLSearchParams({ days: timeRange, dataSource: selectedSource });
+      if (selectedBuilding !== 'all') filters.set('buildingId', selectedBuilding);
+      try {
+        const [summaryResult, trendResult] = await Promise.all([
+          api.get(`/energy/summary?${filters.toString()}`),
+          api.get(`/energy/trends?interval=daily&${filters.toString()}`),
+        ]);
+        setSummary(summaryResult.data);
+        setTrends(trendResult.data.trends || []);
+      } catch { /* Keep the last successfully loaded dashboard values during a brief poll failure. */ }
+    };
+    const timer = window.setInterval(() => void refreshLiveSummary(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [selectedBuilding, selectedSource, timeRange]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -129,6 +148,10 @@ export const Dashboard: React.FC = () => {
           </select></label>
         </div>
       </div>
+
+      <Link to="/live-monitoring" className="flex flex-col gap-3 rounded-xl border border-emerald-500/25 bg-emerald-950/15 p-4 transition hover:border-emerald-400/50 sm:flex-row sm:items-center sm:justify-between">
+        <span className="flex items-start gap-3"><span className="mt-0.5 rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-2"><Radio className="h-4 w-4 text-emerald-300" /></span><span><strong className="block text-xs text-white">Live campus monitoring</strong><span className="mt-1 block text-[10px] text-slate-400">View the labelled synthetic telemetry simulator and submit readings through the ingestion API.</span></span></span><span className="w-fit shrink-0 rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-[9px] font-bold tracking-wide text-amber-200">SIMULATED TELEMETRY</span>
+      </Link>
 
       {error && <div role="alert" className="rounded-xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
 
