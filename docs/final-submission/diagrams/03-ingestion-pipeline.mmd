@@ -1,0 +1,11 @@
+flowchart TD
+  A[CSV readings + optional metadata/weather/occupancy] --> B[Authenticated multipart POST /api/v1/imports]
+  B --> C[Create batch; hash every uploaded file]
+  C --> D[Identify dataset and map building/meter]
+  D --> E[Validate schema, timestamps, units, license and mappings]
+  E -->|invalid rows| R[Persist rejected-row reasons and report]
+  E -->|valid rows| N[Normalize units and timestamps; preserve raw provenance]
+  N --> T[Transactional organization-scoped persistence]
+  T --> Q[Quality counts, progress and batch status]
+  Q --> H[Import history / batch detail / rejection CSV]
+  R --> H

@@ -1,0 +1,13 @@
+flowchart TD
+  X[Organization-scoped meter history] --> Q[Quality-aware hourly preparation]
+  Q --> S[Chronological 70/15/15 split]
+  S --> C[Compare baseline candidates; optional Random Forest/XGBoost]
+  C --> V[Choose by validation MAE]
+  V --> T[Evaluate once on held-out test segment]
+  T --> M[Persist model lifecycle, metrics, provenance and artifact]
+  M --> F[Generate 24/168-hour forecast]
+  F --> P[Persist meter-level predictions]
+  X --> A[Historical anomaly analysis]
+  A --> B[Prior same-local-hour/weekday median + MAD]
+  B --> I[Optional Isolation Forest in combined mode]
+  I --> E[Persist evidence, baseline size, quality and context]

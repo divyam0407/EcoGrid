@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant B as Browser UI
+  participant E as Express API
+  participant P as Prisma/PostgreSQL
+  participant F as FastAPI service
+  B->>E: Authenticated request + active organization
+  E->>E: Verify session, membership, role/entitlement
+  E->>P: Read organization-scoped inputs
+  P-->>E: Readings/configuration
+  E->>F: Analytical request (service configuration)
+  F-->>E: Forecast, detection or optimization result
+  E->>P: Persist validated output/evidence
+  P-->>E: Persisted record
+  E-->>B: Response for UI

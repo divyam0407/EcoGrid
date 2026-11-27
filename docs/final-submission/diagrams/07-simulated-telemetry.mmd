@@ -1,0 +1,12 @@
+sequenceDiagram
+  participant V as Live Monitoring page
+  participant A as Express API
+  participant D as Demo PostgreSQL
+  V->>V: Create deterministic hourly synthetic interval
+  V->>A: POST /api/v1/energy/telemetry (authenticated)
+  A->>A: Validate organization, meter, source, interval, value and timestamp
+  A->>D: Transactional insert / idempotent retry
+  D-->>A: Stored or duplicate result
+  A-->>V: Ingestion status
+  V->>A: Poll status and dashboard summaries
+  Note over V,D: Browser cadence is 15 seconds; each event represents one hour. No physical meter is connected.

@@ -1,0 +1,10 @@
+flowchart TD
+  S[Scenario + building] --> I[Load organization-scoped demand forecast]
+  I --> W[Require 24 aligned future hourly predictions]
+  W --> C[Resolve tariff periods and permissions]
+  C --> R[Resolve configured solar and battery assumptions]
+  R --> M[Build MILP: energy balance, SOC, power, charge mode, grid/export limits]
+  M --> H[SciPy milp / HiGHS]
+  H -->|optimal feasible solution| P[Persist scenario result and dispatch intervals]
+  H -->|infeasible/invalid| E[Return explicit failure; no fabricated dispatch]
+  P --> U[UI shows OPTIMAL and ESTIMATED_UNVERIFIED]

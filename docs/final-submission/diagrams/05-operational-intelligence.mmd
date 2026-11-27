@@ -1,0 +1,11 @@
+flowchart LR
+  R[Historical readings] --> C[Backend context builder]
+  S[Weekly schedules] --> C
+  K[Academic calendar] --> C
+  C -->|known future operational features| F[Forecast model]
+  C -->|descriptive evidence, not occupancy| O[Operational correlation]
+  R --> A[Anomaly evidence]
+  F --> D[Dashboard and recommendation context]
+  O --> D
+  A --> D
+  D --> L[Recommendation with assumptions, limitations and lifecycle]

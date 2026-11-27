@@ -1,0 +1,12 @@
+flowchart LR
+  U[Campus user] --> UI[React + TypeScript + Vite]
+  UI -->|HTTPS/JSON, /api/v1| API[Express + TypeScript API]
+  API -->|Prisma| DB[(PostgreSQL)]
+  API -->|authenticated internal HTTP| ML[FastAPI intelligence service]
+  ML --> FS[(Model artifacts)]
+  API --> FW[Forecast training worker]
+  FW --> DB
+  FW --> FS
+  DEMO[Browser telemetry simulator] -->|authenticated telemetry API| API
+  API --> OBS[Reports and dashboard responses]
+  OBS --> UI
