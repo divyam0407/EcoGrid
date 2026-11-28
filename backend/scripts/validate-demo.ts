@@ -1,4 +1,6 @@
 import { PrismaClient } from '@prisma/client';
+import path from 'path';
+import { validateDemoProvenance } from './demo-provenance';
 
 const url = new URL(process.env.DATABASE_URL || '');
 if (url.pathname !== '/ecogrid_demo' || !['127.0.0.1', 'localhost', '::1'].includes(url.hostname)) throw new Error('Refusing validation: only local ecogrid_demo is permitted.');
@@ -42,17 +44,17 @@ async function main() {
   const solarIssue = solar.find(r => !installations.some(i => i.id === r.installationId) || r.generationKwh < 0 || r.generationKwh > 120 || !Number.isFinite(r.generationKwh));
   checks.push({ name: 'Solar values, mapping and interval uniqueness', passed: solar.length === solarCount && installations.length === 1 && !solarIssue && !duplicateSolarInterval, detail: `${solar.length} hourly records; active installations=${installations.length}; unique installation/timestamp pairs; peak ceiling 120 kWh per hourly interval` });
 
-  const [scheduleRows, eventRows, importFiles, batch] = await Promise.all([
+  const [scheduleRows, eventRows, batch] = await Promise.all([
     prisma.operationalSchedule.findMany({ where: { organizationId: ORG_ID, sourceType: 'SYNTHETIC_DEMO_TIMETABLE' }, select: { dayOfWeek: true, startTime: true, endTime: true, timezone: true, recurrenceRule: true, recurrenceEnd: true, importBatchId: true } }),
     prisma.academicCalendarEvent.findMany({ where: { organizationId: ORG_ID, sourceType: 'SYNTHETIC_DEMO_CALENDAR' }, select: { startDatetime: true, endDatetime: true, timezone: true, allDay: true, importBatchId: true } }),
-    prisma.importFile.findMany({ where: { batch: { organizationId: ORG_ID } }, select: { sha256: true, sizeBytes: true, storagePath: true } }),
-    prisma.dataImportBatch.findFirst({ where: { organizationId: ORG_ID, dataSource: 'SYNTHETIC_DEMO' } }),
+    prisma.dataImportBatch.findFirst({ where: { organizationId: ORG_ID, dataSource: 'SYNTHETIC_DEMO', status: 'COMPLETED' }, select: { id: true, fileSha256: true, originalFilename: true } }),
   ]);
   const opsOk = scheduleRows.every(s => s.dayOfWeek !== null && s.dayOfWeek >= 0 && s.dayOfWeek <= 6 && s.startTime < s.endTime && s.timezone === 'Asia/Kolkata' && s.recurrenceRule === 'WEEKLY' && s.importBatchId === batch?.id)
     && eventRows.every(e => e.startDatetime < e.endDatetime && e.timezone === 'Asia/Kolkata' && e.allDay && e.importBatchId === batch?.id);
   checks.push({ name: 'Schedules and academic calendar', passed: opsOk, detail: `${scheduleRows.length} weekly schedules, ${eventRows.length} local-time calendar events; no occupancy inference` });
-  const filesOk = importFiles.length >= 3 && importFiles.every(f => /^[a-f0-9]{64}$/.test(f.sha256) && f.sizeBytes > 0 && f.storagePath.startsWith('datasets/demo/')) && batch?.fileSha256 === importFiles.find(f => f.storagePath.endsWith('energy-readings.csv'))?.sha256;
-  checks.push({ name: 'Import provenance manifest and SHA-256', passed: Boolean(filesOk), detail: `${importFiles.length} hashed files, batch hash matches energy CSV` });
+  const importFiles = batch ? await prisma.importFile.findMany({ where: { batchId: batch.id }, select: { batchId: true, fieldName: true, originalFilename: true, sha256: true, sizeBytes: true, storagePath: true } }) : [];
+  const provenance = validateDemoProvenance(batch, importFiles, path.resolve(__dirname, '../..'));
+  checks.push({ name: 'Import provenance manifest and SHA-256', passed: provenance.passed, detail: provenance.detail });
   const [tariff, battery] = await Promise.all([prisma.electricityTariff.findFirst({ where: { organizationId: ORG_ID } }), prisma.battery.findFirst({ where: { organizationId: ORG_ID, status: 'ACTIVE' } })]);
   const configOk = Boolean(tariff && tariff.pricePerKwh > 0 && tariff.allowGridExport && tariff.exportPricePerKwh !== null && battery && battery.capacityKwh > 0 && battery.minSoc <= battery.initialSoc && battery.initialSoc <= battery.maxSoc && battery.maxSoc <= battery.capacityKwh && battery.chargingEfficiency > 0 && battery.chargingEfficiency <= 1 && !battery.allowGridCharging);
   checks.push({ name: 'Explicit tariff, solar and battery setup', passed: configOk, detail: JSON.stringify({ tariff: tariff?.tariffName, importPrice: tariff?.pricePerKwh, exportPrice: tariff?.exportPricePerKwh?.toString(), battery: battery ? { capacityKwh: battery.capacityKwh, minSoc: battery.minSoc, initialSoc: battery.initialSoc, maxSoc: battery.maxSoc, allowGridCharging: battery.allowGridCharging } : null, solarCapacityKw: installations[0]?.capacityKw }) });
